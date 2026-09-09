@@ -1,0 +1,11 @@
+.idea/
+.vscode/
+.DS_Store
+.env
+.env.*
+!.env.example
+!.env.example.*
+!.env.example.local
+!.env.example.development
+!.env.example.test
+!.env.example.production
