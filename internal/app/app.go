@@ -140,3 +140,74 @@ func (a *App) Diff() int {
 	}
 	return exitcode.Gate
 }
+
+func (a *App) Sync() int {
+	to := a.To
+	if to == "" {
+		to = "HEAD"
+	}
+
+	toG, code := a.graphAt(to)
+	if code != exitcode.OK {
+		return code
+	}
+
+	payload := graph.RenderMermaid(toG)
+	docPath := filepath.Join(a.Repo.Root, filepath.FromSlash(a.Doc))
+
+	body, err := buildSyncedDoc(docPath, a.Anchor, payload)
+	if err != nil {
+		fmt.Fprintln(a.Stderr, err)
+		return exitcode.Fail
+	}
+	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
+		fmt.Fprintln(a.Stderr, err)
+		return exitcode.Fail
+	}
+	if err := os.WriteFile(docPath, body, 0o644); err != nil {
+		fmt.Fprintln(a.Stderr, err)
+		return exitcode.Fail
+	}
+
+	fr, err := a.Repo.ResolveFrom(to, a.From)
+	if err != nil {
+		if a.From == "" && errors.Is(err, git.ErrNoTag) {
+			fmt.Fprintln(a.Stderr, "warning:", err)
+			return exitcode.OK
+		}
+		fmt.Fprintln(a.Stderr, err)
+		return exitcode.Fail
+	}
+
+	if fr.EmptyDiff {
+		fmt.Fprint(a.Stdout, graph.FormatReport(graph.Diff{}))
+		return exitcode.OK
+	}
+
+	fromG, code := a.graphAt(fr.From)
+	if code != exitcode.OK {
+		return code
+	}
+
+	fmt.Fprint(a.Stdout, graph.FormatReport(graph.DiffGraphs(fromG, toG)))
+	return exitcode.OK
+}
+
+func buildSyncedDoc(path, anchor, payload string) ([]byte, error) {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return doc.NewDocument(payload, anchor), nil
+		}
+		return nil, err
+	}
+
+	_, ok, err := doc.ExtractRegion(src, anchor)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return doc.AppendAnchor(src, anchor, payload), nil
+	}
+	return doc.ReplaceRegion(src, anchor, payload)
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/j75689/archon/internal/doc"
 	"github.com/j75689/archon/internal/exitcode"
 	"github.com/j75689/archon/internal/git"
 	"github.com/j75689/archon/internal/graph"
@@ -204,6 +205,79 @@ func TestCheckMissingAndMatch(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "--from is ignored") {
 		t.Fatalf("stderr %s", errb)
+	}
+}
+
+func TestSyncCreatesDocAndCheckPassesWithoutTag(t *testing.T) {
+	dir := initRepo(t)
+
+	a, out, errb := newApp(t, dir)
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("sync code %d stdout %s stderr %s", code, out, errb)
+	}
+	if !strings.Contains(errb.String(), "pass --from") {
+		t.Fatalf("stderr %q", errb.String())
+	}
+
+	body, err := os.ReadFile(filepath.Join(dir, "docs", "ARCHITECTURE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "\r") {
+		t.Fatalf("doc must use LF, got %q", string(body))
+	}
+
+	a, _, errb = newApp(t, dir)
+	if code := a.Check(); code != exitcode.OK {
+		t.Fatalf("check code %d stderr %s", code, errb)
+	}
+}
+
+func TestSyncPreservesRationaleAndReplacesAnchoredRegion(t *testing.T) {
+	dir := initRepo(t)
+
+	docPath := filepath.Join(dir, "docs", "ARCHITECTURE.md")
+	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const rationale = "# Architecture\n\nThis rationale must survive.\n\n"
+	const stale = "<!-- ARCHON:START:data-flow -->\n```mermaid\nflowchart LR\n  stale[\"stale\"]\n```\n<!-- ARCHON:END:data-flow -->\n"
+	if err := os.WriteFile(docPath, []byte(rationale+stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a, out, errb := newApp(t, dir)
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("sync code %d stdout %s stderr %s", code, out, errb)
+	}
+
+	body, err := os.ReadFile(docPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "This rationale must survive.") {
+		t.Fatalf("rationale lost: %s", body)
+	}
+	region, ok, err := doc.ExtractRegion(body, "data-flow")
+	if err != nil || !ok {
+		t.Fatalf("extract: ok=%v err=%v", ok, err)
+	}
+
+	r, err := git.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := r.Snapshot("HEAD", golang.WantFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := graph.Compile(mustExtract(t, snap))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.TrimSuffix(graph.RenderMermaid(g), "\n")
+	if region != want {
+		t.Fatalf("region %q want %q", region, want)
 	}
 }
 

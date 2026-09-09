@@ -93,6 +93,19 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		},
 	})
 
+	root.AddCommand(&cobra.Command{
+		Use:   "sync",
+		Short: "Write the graph at --to into the architecture doc",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := newApp()
+			if err != nil {
+				return err
+			}
+			return exitCodeErr(a.Sync())
+		},
+	})
+
 	return root
 }
 
