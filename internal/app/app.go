@@ -17,25 +17,31 @@ import (
 )
 
 type App struct {
-	Repo   *git.Repo
-	Ext    lang.Extractor
-	From   string
-	To     string
-	Doc    string
-	Anchor string
-	Stdout io.Writer
-	Stderr io.Writer
+	Repo    *git.Repo
+	Ext     lang.Extractor
+	From    string
+	To      string
+	Doc     string
+	Anchor  string
+	Model   string
+	BaseURL string
+	APIKey  string
+	LLM     bool
+	Stdout  io.Writer
+	Stderr  io.Writer
 }
 
 func New(repo *git.Repo) *App {
 	return &App{
-		Repo:   repo,
-		Ext:    golang.Extractor{},
-		To:     "HEAD",
-		Doc:    "docs/ARCHITECTURE.md",
-		Anchor: "data-flow",
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
+		Repo:    repo,
+		Ext:     golang.Extractor{},
+		To:      "HEAD",
+		Doc:     "docs/ARCHITECTURE.md",
+		Anchor:  "data-flow",
+		Model:   "gpt-4o-mini",
+		BaseURL: "https://api.openai.com/v1",
+		Stdout:  os.Stdout,
+		Stderr:  os.Stderr,
 	}
 }
 

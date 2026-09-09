@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/j75689/archon/internal/app"
+	"github.com/j75689/archon/internal/config"
 	"github.com/j75689/archon/internal/exitcode"
 	"github.com/j75689/archon/internal/git"
 	"github.com/spf13/cobra"
@@ -55,15 +56,34 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 			fmt.Fprintln(stderr, err)
 			return nil, errExit{code: exitcode.Fail}
 		}
+		home, _ := os.UserHomeDir()
+		cfg, err := config.Load(
+			repo.Root,
+			config.Values{
+				From: from,
+				To:   to,
+				Doc:  doc,
+			},
+			os.Getenv,
+			os.ReadFile,
+			home,
+		)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return nil, errExit{code: exitcode.Fail}
+		}
 
 		a := app.New(repo)
 		a.Stdout = stdout
 		a.Stderr = stderr
-		a.From = from
-		a.To = to
-		if doc != "" {
-			a.Doc = doc
-		}
+		a.From = cfg.From
+		a.To = cfg.To
+		a.Doc = cfg.Doc
+		a.Anchor = cfg.Anchor
+		a.Model = cfg.Model
+		a.BaseURL = cfg.BaseURL
+		a.APIKey = cfg.APIKey
+		a.LLM = cfg.LLM
 		return a, nil
 	}
 
