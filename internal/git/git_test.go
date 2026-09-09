@@ -49,7 +49,7 @@ func tryGit(dir string, args ...string) error {
 	return err
 }
 
-func initRepo(t *testing.T) string {
+func initEmptyRepo(t *testing.T) string {
 	t.Helper()
 	gitOK(t)
 
@@ -58,6 +58,12 @@ func initRepo(t *testing.T) string {
 		runGit(t, dir, "init")
 		runGit(t, dir, "checkout", "-b", "main")
 	}
+	return dir
+}
+
+func initRepo(t *testing.T) string {
+	t.Helper()
+	dir := initEmptyRepo(t)
 
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/m\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -187,9 +193,7 @@ func TestLogSubjects(t *testing.T) {
 }
 
 func TestResolveFromExplicit(t *testing.T) {
-	gitOK(t)
-	dir := t.TempDir()
-	runGit(t, dir, "init", "-b", "main")
+	dir := initEmptyRepo(t)
 	mustCommitFile(t, dir, "go.mod", "module example.com/m\n", "c1")
 	r, _ := Open(dir)
 	h, _ := r.Verify("HEAD")
@@ -200,9 +204,7 @@ func TestResolveFromExplicit(t *testing.T) {
 }
 
 func TestResolveFromNoTag(t *testing.T) {
-	gitOK(t)
-	dir := t.TempDir()
-	runGit(t, dir, "init", "-b", "main")
+	dir := initEmptyRepo(t)
 	mustCommitFile(t, dir, "go.mod", "module example.com/m\n", "c1")
 	r, _ := Open(dir)
 	_, err := r.ResolveFrom("HEAD", "")
@@ -212,9 +214,7 @@ func TestResolveFromNoTag(t *testing.T) {
 }
 
 func TestResolveFromLatestTagAndFirstTag(t *testing.T) {
-	gitOK(t)
-	dir := t.TempDir()
-	runGit(t, dir, "init", "-b", "main")
+	dir := initEmptyRepo(t)
 	mustCommitFile(t, dir, "go.mod", "module example.com/m\n", "c1")
 	runGit(t, dir, "tag", "v0.1.0")
 	r, _ := Open(dir)
