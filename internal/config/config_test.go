@@ -151,6 +151,46 @@ func TestLoadEnablesLLMForEnvBaseURLWithoutAPIKey(t *testing.T) {
 	}
 }
 
+func TestLoadSkipsUserYAMLWhenHomeEmpty(t *testing.T) {
+	repoRoot := "/repo"
+	userConfigPath := filepath.Join(".config", "archon", "config.yaml")
+
+	got, err := Load(
+		repoRoot,
+		Values{},
+		func(string) string { return "" },
+		func(path string) ([]byte, error) {
+			if path == userConfigPath {
+				t.Fatalf("readFile called with user config path %q when home is empty", path)
+			}
+			return nil, &os.PathError{Op: "open", Path: path, Err: os.ErrNotExist}
+		},
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.To != "HEAD" {
+		t.Fatalf("To = %q, want %q", got.To, "HEAD")
+	}
+	if got.Doc != "docs/ARCHITECTURE.md" {
+		t.Fatalf("Doc = %q, want %q", got.Doc, "docs/ARCHITECTURE.md")
+	}
+	if got.Anchor != "data-flow" {
+		t.Fatalf("Anchor = %q, want %q", got.Anchor, "data-flow")
+	}
+	if got.Model != "gpt-4o-mini" {
+		t.Fatalf("Model = %q, want %q", got.Model, "gpt-4o-mini")
+	}
+	if got.BaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("BaseURL = %q, want %q", got.BaseURL, "https://api.openai.com/v1")
+	}
+	if got.LLM {
+		t.Fatalf("LLM = %v, want false", got.LLM)
+	}
+}
+
 func TestLoadEnablesLLMForAPIKey(t *testing.T) {
 	got, err := Load(
 		"/repo",

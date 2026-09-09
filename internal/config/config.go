@@ -40,9 +40,12 @@ func Load(repoRoot string, flags Values, getenv func(string) string, readFile fu
 		return Values{}, err
 	}
 
-	userCfg, err := loadYAML(filepath.Join(home, ".config", "archon", "config.yaml"), readFile)
-	if err != nil {
-		return Values{}, err
+	var userCfg fileConfig
+	if home != "" {
+		userCfg, err = loadYAML(filepath.Join(home, ".config", "archon", "config.yaml"), readFile)
+		if err != nil {
+			return Values{}, err
+		}
 	}
 
 	envDoc := getenv("ARCHON_DOC")
