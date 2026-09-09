@@ -144,3 +144,34 @@ func TestAppendAnchorAlreadyNewline(t *testing.T) {
 		t.Fatalf("prefix %q", got[:10])
 	}
 }
+
+func TestNewDocumentPayloadWithoutTrailingNewline(t *testing.T) {
+	payload := "flowchart LR"
+	got := NewDocument(payload, "data-flow")
+	if !bytes.Contains(got, []byte("flowchart LR\n<!-- ARCHON:END:data-flow -->")) {
+		t.Fatalf("END must be on its own line after payload: %q", got)
+	}
+	region, ok, err := ExtractRegion(got, "data-flow")
+	if err != nil || !ok {
+		t.Fatalf("extract: ok=%v err=%v", ok, err)
+	}
+	if region != payload {
+		t.Fatalf("region %q want %q", region, payload)
+	}
+}
+
+func TestAppendAnchorPayloadWithoutTrailingNewline(t *testing.T) {
+	src := []byte("# Existing doc\n")
+	payload := "flowchart LR"
+	got := AppendAnchor(src, "data-flow", payload)
+	if !bytes.Contains(got, []byte("flowchart LR\n<!-- ARCHON:END:data-flow -->")) {
+		t.Fatalf("END must be on its own line after payload: %q", got)
+	}
+	region, ok, err := ExtractRegion(got, "data-flow")
+	if err != nil || !ok {
+		t.Fatalf("extract: ok=%v err=%v", ok, err)
+	}
+	if region != payload {
+		t.Fatalf("region %q want %q", region, payload)
+	}
+}

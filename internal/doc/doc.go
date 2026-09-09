@@ -134,6 +134,9 @@ func ReplaceRegion(src []byte, id, payload string) ([]byte, error) {
 
 func NewDocument(payload, id string) []byte {
 	payload = NormalizeNL(payload)
+	if payload == "" || !strings.HasSuffix(payload, "\n") {
+		payload += "\n"
+	}
 	var b strings.Builder
 	b.WriteString("# Architecture\n\n")
 	b.WriteString(startLine(id))
@@ -146,6 +149,9 @@ func NewDocument(payload, id string) []byte {
 
 func AppendAnchor(src []byte, id, payload string) []byte {
 	payload = NormalizeNL(payload)
+	if payload == "" || !strings.HasSuffix(payload, "\n") {
+		payload += "\n"
+	}
 	var b bytes.Buffer
 	b.Write(src)
 	if len(src) > 0 && src[len(src)-1] != '\n' {
