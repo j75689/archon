@@ -104,4 +104,83 @@ func TestDeltaHTTPError(t *testing.T) {
 	if !strings.Contains(err.Error(), "500") {
 		t.Fatalf("error = %v", err)
 	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("error must be one line: %q", err.Error())
+	}
+}
+
+func TestDeltaHTTPErrorCompactMultiLineBody(t *testing.T) {
+	body := "{\n  \"error\": {\n    \"message\": \"internal\nfailure\"\n  }\n}\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		BaseURL: srv.URL,
+		Model:   "gpt-test",
+		HTTP:    srv.Client(),
+	}
+
+	_, err := c.Delta(context.Background(), graph.Diff{
+		AddedNodes: []graph.Node{{Key: "example.com/m/api"}},
+	}, []string{"add api"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("error must be one line: %q", err.Error())
+	}
+	want := CompactErrorText(body)
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %q, want compact body %q", err.Error(), want)
+	}
+}
+
+func TestDeltaEmptyResponseBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		BaseURL: srv.URL,
+		Model:   "gpt-test",
+		HTTP:    srv.Client(),
+	}
+
+	_, err := c.Delta(context.Background(), graph.Diff{
+		AddedNodes: []graph.Node{{Key: "example.com/m/api"}},
+	}, []string{"add api"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "empty response body") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDeltaEmptyAssistantContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":""}}]}`)
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		BaseURL: srv.URL,
+		Model:   "gpt-test",
+		HTTP:    srv.Client(),
+	}
+
+	_, err := c.Delta(context.Background(), graph.Diff{
+		AddedNodes: []graph.Node{{Key: "example.com/m/api"}},
+	}, []string{"add api"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "missing content") {
+		t.Fatalf("error = %v", err)
+	}
 }

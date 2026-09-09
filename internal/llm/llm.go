@@ -77,7 +77,14 @@ func (c *Client) Delta(ctx context.Context, d graph.Diff, subjects []string) (st
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("llm request failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		detail := CompactErrorText(string(respBody))
+		if detail == "" {
+			detail = "empty body"
+		}
+		return "", fmt.Errorf("llm request failed: status %d: %s", resp.StatusCode, detail)
+	}
+	if len(strings.TrimSpace(string(respBody))) == 0 {
+		return "", fmt.Errorf("llm request failed: empty response body")
 	}
 
 	var decoded chatResponse
@@ -93,6 +100,19 @@ func (c *Client) Delta(ctx context.Context, d graph.Diff, subjects []string) (st
 		return "", fmt.Errorf("llm response missing content")
 	}
 	return content, nil
+}
+
+// CompactErrorText collapses whitespace so LLM errors fit on one stderr line.
+func CompactErrorText(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// FormatDeltaError renders a Delta failure as one compact stderr line.
+func FormatDeltaError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "llm delta: " + CompactErrorText(err.Error())
 }
 
 func (c *Client) httpClient() *http.Client {

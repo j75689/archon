@@ -329,6 +329,98 @@ func TestChangelogSkipsLLMForPrivateOnlyChange(t *testing.T) {
 	}
 }
 
+func assertOneStderrLine(t *testing.T, stderr string) {
+	t.Helper()
+	if stderr == "" {
+		t.Fatal("expected stderr")
+	}
+	if !strings.HasSuffix(stderr, "\n") {
+		t.Fatalf("stderr must end with newline: %q", stderr)
+	}
+	inner := strings.TrimSuffix(stderr, "\n")
+	if strings.Contains(inner, "\n") {
+		t.Fatalf("stderr must be one line, got %q", stderr)
+	}
+}
+
+func TestChangelogOneStderrLineOnLLM500MultiLineBody(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
+
+	body := "<html>\n<title>error</title>\n<body>fail</body>\n</html>\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	a, out, errb := newApp(t, dir)
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
+	if code := a.Changelog(); code != exitcode.OK {
+		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
+	}
+	if !strings.Contains(out.String(), "added nodes:") {
+		t.Fatalf("stdout %q", out.String())
+	}
+	assertOneStderrLine(t, errb.String())
+	if !strings.Contains(errb.String(), "llm delta:") {
+		t.Fatalf("stderr %q", errb.String())
+	}
+	if !strings.Contains(errb.String(), "<html> <title>error</title>") {
+		t.Fatalf("stderr must contain compact error body: %q", errb.String())
+	}
+}
+
+func TestChangelogOneStderrLineOnEmptyLLMBody(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	a, out, errb := newApp(t, dir)
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
+	if code := a.Changelog(); code != exitcode.OK {
+		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
+	}
+	if !strings.Contains(out.String(), "added nodes:") {
+		t.Fatalf("stdout %q", out.String())
+	}
+	assertOneStderrLine(t, errb.String())
+	if !strings.Contains(errb.String(), "empty response body") {
+		t.Fatalf("stderr %q", errb.String())
+	}
+}
+
+func TestChangelogOneStderrLineOnEmptyAssistantContent(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":""}}]}`))
+	}))
+	defer srv.Close()
+
+	a, out, errb := newApp(t, dir)
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
+	if code := a.Changelog(); code != exitcode.OK {
+		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
+	}
+	if !strings.Contains(out.String(), "added nodes:") {
+		t.Fatalf("stdout %q", out.String())
+	}
+	assertOneStderrLine(t, errb.String())
+	if !strings.Contains(errb.String(), "missing content") {
+		t.Fatalf("stderr %q", errb.String())
+	}
+}
+
 func TestSyncFallsBackToReportWhenLLMFails(t *testing.T) {
 	dir := initRepo(t)
 	runGit(t, dir, "tag", "v1.0.0")
@@ -350,6 +442,7 @@ func TestSyncFallsBackToReportWhenLLMFails(t *testing.T) {
 	if !strings.Contains(errb.String(), "llm") {
 		t.Fatalf("stderr %q", errb.String())
 	}
+	assertOneStderrLine(t, errb.String())
 }
 
 func mustExtract(t *testing.T, snap lang.Snapshot) graph.Graph {

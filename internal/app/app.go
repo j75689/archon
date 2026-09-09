@@ -192,7 +192,7 @@ func (a *App) Changelog() int {
 	}
 	delta, err := a.LLM.Delta(context.Background(), d, subjects)
 	if err != nil {
-		fmt.Fprintln(a.Stderr, "llm delta:", err)
+		fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
 		return exitcode.OK
 	}
 
@@ -264,7 +264,7 @@ func (a *App) Sync() int {
 	}
 	delta, err := a.LLM.Delta(context.Background(), d, subjects)
 	if err != nil {
-		fmt.Fprintln(a.Stderr, "llm delta:", err)
+		fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
 		fmt.Fprint(a.Stdout, graph.FormatReport(d))
 		return exitcode.OK
 	}
