@@ -1,4 +1,6 @@
 .idea/
+.worktrees/
+.cursor/
 .vscode/
 .DS_Store
 .env
