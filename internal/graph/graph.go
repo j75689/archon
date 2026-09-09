@@ -54,15 +54,26 @@ func Compile(g Graph) (Graph, error) {
 	nodes := append([]Node(nil), g.Nodes...)
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Key < nodes[j].Key })
 	ids := map[string]string{}
+	nodeKeys := make(map[string]struct{}, len(nodes))
 	for i := range nodes {
 		id := nodeID(nodes[i].Label)
 		if other, ok := ids[id]; ok && other != nodes[i].Key {
 			return Graph{}, fmt.Errorf("mermaid id collision %q between %q and %q", id, other, nodes[i].Key)
 		}
 		ids[id] = nodes[i].Key
+		nodeKeys[nodes[i].Key] = struct{}{}
 		nodes[i].ID = id
 	}
-	edges := append([]Edge(nil), g.Edges...)
+	edges := make([]Edge, 0, len(g.Edges))
+	for _, edge := range g.Edges {
+		if _, ok := nodeKeys[edge.From]; !ok {
+			continue
+		}
+		if _, ok := nodeKeys[edge.To]; !ok {
+			continue
+		}
+		edges = append(edges, edge)
+	}
 	sort.Slice(edges, func(i, j int) bool {
 		if edges[i].From != edges[j].From {
 			return edges[i].From < edges[j].From
