@@ -103,6 +103,41 @@ func (r *Repo) LogSubjects(from, to string, maxN, maxBytes int) ([]string, error
 	return subs, nil
 }
 
+type FromResult struct {
+	From      string
+	EmptyDiff bool
+}
+
+func (r *Repo) ResolveFrom(to, explicit string) (FromResult, error) {
+	if explicit != "" {
+		if _, err := r.Verify(explicit); err != nil {
+			return FromResult{}, err
+		}
+		return FromResult{From: explicit}, nil
+	}
+	tag, err := r.DescribeTag(to)
+	if err != nil {
+		return FromResult{}, err
+	}
+	toHash, err := r.Verify(to)
+	if err != nil {
+		return FromResult{}, err
+	}
+	tagHash, err := r.Verify(tag)
+	if err != nil {
+		return FromResult{}, err
+	}
+	if toHash != tagHash {
+		return FromResult{From: tag}, nil
+	}
+	parent := to + "^"
+	prev, err := r.DescribeTag(parent)
+	if err != nil {
+		return FromResult{EmptyDiff: true}, nil
+	}
+	return FromResult{From: prev}, nil
+}
+
 func (r *Repo) DescribeTag(rev string) (string, error) {
 	out, err := r.cmd(r.Root, "describe", "--tags", "--abbrev=0", rev)
 	if err != nil {

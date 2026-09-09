@@ -186,6 +186,64 @@ func TestLogSubjects(t *testing.T) {
 	}
 }
 
+func TestResolveFromExplicit(t *testing.T) {
+	gitOK(t)
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	mustCommitFile(t, dir, "go.mod", "module example.com/m\n", "c1")
+	r, _ := Open(dir)
+	h, _ := r.Verify("HEAD")
+	got, err := r.ResolveFrom("HEAD", h)
+	if err != nil || got.From != h || got.EmptyDiff {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestResolveFromNoTag(t *testing.T) {
+	gitOK(t)
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	mustCommitFile(t, dir, "go.mod", "module example.com/m\n", "c1")
+	r, _ := Open(dir)
+	_, err := r.ResolveFrom("HEAD", "")
+	if !errors.Is(err, ErrNoTag) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestResolveFromLatestTagAndFirstTag(t *testing.T) {
+	gitOK(t)
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	mustCommitFile(t, dir, "go.mod", "module example.com/m\n", "c1")
+	runGit(t, dir, "tag", "v0.1.0")
+	r, _ := Open(dir)
+	got, err := r.ResolveFrom("v0.1.0", "")
+	if err != nil || !got.EmptyDiff {
+		t.Fatalf("first tag: %+v %v", got, err)
+	}
+	mustCommitFile(t, dir, "a.go", "package m\n", "c2")
+	runGit(t, dir, "tag", "v0.2.0")
+	got, err = r.ResolveFrom("v0.2.0", "")
+	if err != nil || got.EmptyDiff || got.From != "v0.1.0" {
+		t.Fatalf("second tag: %+v %v", got, err)
+	}
+	mustCommitFile(t, dir, "b.go", "package m\n", "c3")
+	got, err = r.ResolveFrom("HEAD", "")
+	if err != nil || got.From != "v0.2.0" {
+		t.Fatalf("head after tags: %+v %v", got, err)
+	}
+}
+
+func mustCommitFile(t *testing.T, dir, name, body, msg string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", name)
+	runGit(t, dir, "commit", "-m", msg)
+}
+
 func TestLogSubjectsLimits(t *testing.T) {
 	dir := initRepo(t)
 
