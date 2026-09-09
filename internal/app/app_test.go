@@ -2,6 +2,8 @@ package app
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -443,6 +445,177 @@ func TestSyncFallsBackToReportWhenLLMFails(t *testing.T) {
 		t.Fatalf("stderr %q", errb.String())
 	}
 	assertOneStderrLine(t, errb.String())
+}
+
+type seqExtractor struct {
+	match      bool
+	extracts   []func(lang.Snapshot) (graph.Graph, error)
+	defaultErr error
+}
+
+func (e *seqExtractor) Name() string { return "seq" }
+
+func (e *seqExtractor) Match(lang.Snapshot) bool { return e.match }
+
+func (e *seqExtractor) Extract(s lang.Snapshot) (graph.Graph, error) {
+	if len(e.extracts) == 0 {
+		if e.defaultErr != nil {
+			return graph.Graph{}, e.defaultErr
+		}
+		return graph.Graph{}, fmt.Errorf("unexpected extract call for %s", s.Rev)
+	}
+	fn := e.extracts[0]
+	e.extracts = e.extracts[1:]
+	return fn(s)
+}
+
+func TestSyncWarnsAndKeepsOKWhenResolveFromFailsAfterWrite(t *testing.T) {
+	dir := initRepo(t)
+
+	r, err := git.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, out, errb := newApp(t, dir)
+	a.Repo = r
+	a.Ext = &seqExtractor{
+		match: true,
+		extracts: []func(lang.Snapshot) (graph.Graph, error){
+			func(lang.Snapshot) (graph.Graph, error) {
+				a.Repo.Bin = filepath.Join(dir, "missing-git")
+				return graph.Graph{Nodes: []graph.Node{{Key: "example.com/m", Label: "."}}}, nil
+			},
+		},
+	}
+
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "git") {
+		t.Fatalf("stderr %q", errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs", "ARCHITECTURE.md")); err != nil {
+		t.Fatalf("doc not written: %v", err)
+	}
+}
+
+func TestSyncWarnsAndKeepsOKWhenFromGraphFailsAfterWrite(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
+
+	a, out, errb := newApp(t, dir)
+	a.Ext = &seqExtractor{
+		match: true,
+		extracts: []func(lang.Snapshot) (graph.Graph, error){
+			func(lang.Snapshot) (graph.Graph, error) {
+				return graph.Graph{
+					Nodes: []graph.Node{
+						{Key: "example.com/m", Label: "."},
+						{Key: "example.com/m/b", Label: "b"},
+					},
+					Edges: []graph.Edge{{From: "example.com/m", To: "example.com/m/b"}},
+				}, nil
+			},
+			func(lang.Snapshot) (graph.Graph, error) {
+				return graph.Graph{}, errors.New("from extract boom")
+			},
+		},
+	}
+
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "from extract boom") {
+		t.Fatalf("stderr %q", errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs", "ARCHITECTURE.md")); err != nil {
+		t.Fatalf("doc not written: %v", err)
+	}
+}
+
+func TestSyncWarnsAndPrintsReportWhenLogSubjectsFails(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
+
+	r, err := git.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, out, errb := newApp(t, dir)
+	a.Repo = r
+	a.LLM = &llm.Client{BaseURL: "http://127.0.0.1:1", Model: "gpt-test"}
+	a.Ext = &seqExtractor{
+		match: true,
+		extracts: []func(lang.Snapshot) (graph.Graph, error){
+			func(lang.Snapshot) (graph.Graph, error) {
+				return graph.Graph{
+					Nodes: []graph.Node{
+						{Key: "example.com/m", Label: "."},
+						{Key: "example.com/m/b", Label: "b"},
+					},
+					Edges: []graph.Edge{{From: "example.com/m", To: "example.com/m/b"}},
+				}, nil
+			},
+			func(lang.Snapshot) (graph.Graph, error) {
+				a.Repo.Bin = filepath.Join(dir, "missing-git")
+				return graph.Graph{Nodes: []graph.Node{{Key: "example.com/m", Label: "."}}}, nil
+			},
+		},
+	}
+
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "git") {
+		t.Fatalf("stderr %q", errb.String())
+	}
+	if !strings.Contains(out.String(), "added nodes:") {
+		t.Fatalf("stdout %q", out.String())
+	}
+}
+
+func TestChangelogWarnsAndPrintsReportWhenLogSubjectsFails(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
+
+	r, err := git.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, out, errb := newApp(t, dir)
+	a.Repo = r
+	a.LLM = &llm.Client{BaseURL: "http://127.0.0.1:1", Model: "gpt-test"}
+	a.Ext = &seqExtractor{
+		match: true,
+		extracts: []func(lang.Snapshot) (graph.Graph, error){
+			func(lang.Snapshot) (graph.Graph, error) {
+				return graph.Graph{Nodes: []graph.Node{{Key: "example.com/m", Label: "."}}}, nil
+			},
+			func(lang.Snapshot) (graph.Graph, error) {
+				a.Repo.Bin = filepath.Join(dir, "missing-git")
+				return graph.Graph{
+					Nodes: []graph.Node{
+						{Key: "example.com/m", Label: "."},
+						{Key: "example.com/m/b", Label: "b"},
+					},
+					Edges: []graph.Edge{{From: "example.com/m", To: "example.com/m/b"}},
+				}, nil
+			},
+		},
+	}
+
+	if code := a.Changelog(); code != exitcode.OK {
+		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "git") {
+		t.Fatalf("stderr %q", errb.String())
+	}
+	if !strings.Contains(out.String(), "added nodes:") {
+		t.Fatalf("stdout %q", out.String())
+	}
 }
 
 func mustExtract(t *testing.T, snap lang.Snapshot) graph.Graph {

@@ -187,8 +187,8 @@ func (a *App) Changelog() int {
 
 	subjects, err := a.Repo.LogSubjects(fr.From, to, 50, 8192)
 	if err != nil {
-		fmt.Fprintln(a.Stderr, err)
-		return exitcode.Fail
+		fmt.Fprintln(a.Stderr, "warning:", err)
+		return exitcode.OK
 	}
 	delta, err := a.LLM.Delta(context.Background(), d, subjects)
 	if err != nil {
@@ -237,8 +237,8 @@ func (a *App) Sync() int {
 			fmt.Fprintln(a.Stderr, "warning:", err)
 			return exitcode.OK
 		}
-		fmt.Fprintln(a.Stderr, err)
-		return exitcode.Fail
+		fmt.Fprintln(a.Stderr, "warning:", err)
+		return exitcode.OK
 	}
 
 	if fr.EmptyDiff {
@@ -248,7 +248,7 @@ func (a *App) Sync() int {
 
 	fromG, code := a.graphAt(fr.From)
 	if code != exitcode.OK {
-		return code
+		return exitcode.OK
 	}
 
 	d := graph.DiffGraphs(fromG, toG)
@@ -259,8 +259,9 @@ func (a *App) Sync() int {
 
 	subjects, err := a.Repo.LogSubjects(fr.From, to, 50, 8192)
 	if err != nil {
-		fmt.Fprintln(a.Stderr, err)
-		return exitcode.Fail
+		fmt.Fprintln(a.Stderr, "warning:", err)
+		fmt.Fprint(a.Stdout, graph.FormatReport(d))
+		return exitcode.OK
 	}
 	delta, err := a.LLM.Delta(context.Background(), d, subjects)
 	if err != nil {

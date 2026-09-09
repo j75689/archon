@@ -14,11 +14,9 @@ import (
 )
 
 func TestRunDiffNoRepo(t *testing.T) {
-	dir, err := os.MkdirTemp("/private/tmp", "archon-norepo-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	gitOK(t)
+
+	dir := t.TempDir()
 	t.Chdir(dir)
 
 	var stdout, stderr bytes.Buffer
