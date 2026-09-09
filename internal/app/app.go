@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/j75689/archon/internal/graph"
 	"github.com/j75689/archon/internal/lang"
 	"github.com/j75689/archon/internal/lang/golang"
+	"github.com/j75689/archon/internal/llm"
 )
 
 type App struct {
@@ -26,7 +28,7 @@ type App struct {
 	Model   string
 	BaseURL string
 	APIKey  string
-	LLM     bool
+	LLM     *llm.Client
 	Stdout  io.Writer
 	Stderr  io.Writer
 }
@@ -147,6 +149,60 @@ func (a *App) Diff() int {
 	return exitcode.Gate
 }
 
+func (a *App) Changelog() int {
+	to := a.To
+	if to == "" {
+		to = "HEAD"
+	}
+
+	fr, err := a.Repo.ResolveFrom(to, a.From)
+	if err != nil {
+		if errors.Is(err, git.ErrNoTag) {
+			fmt.Fprintln(a.Stderr, err)
+			return exitcode.Fail
+		}
+		fmt.Fprintln(a.Stderr, err)
+		return exitcode.Fail
+	}
+
+	if fr.EmptyDiff {
+		fmt.Fprint(a.Stdout, graph.FormatReport(graph.Diff{}))
+		return exitcode.OK
+	}
+
+	fromG, code := a.graphAt(fr.From)
+	if code != exitcode.OK {
+		return code
+	}
+	toG, code := a.graphAt(to)
+	if code != exitcode.OK {
+		return code
+	}
+
+	d := graph.DiffGraphs(fromG, toG)
+	fmt.Fprint(a.Stdout, graph.FormatReport(d))
+	if d.Empty() || a.LLM == nil {
+		return exitcode.OK
+	}
+
+	subjects, err := a.Repo.LogSubjects(fr.From, to, 50, 8192)
+	if err != nil {
+		fmt.Fprintln(a.Stderr, err)
+		return exitcode.Fail
+	}
+	delta, err := a.LLM.Delta(context.Background(), d, subjects)
+	if err != nil {
+		fmt.Fprintln(a.Stderr, "llm delta:", err)
+		return exitcode.OK
+	}
+
+	if !strings.HasSuffix(graph.FormatReport(d), "\n\n") {
+		fmt.Fprintln(a.Stdout)
+	}
+	fmt.Fprintln(a.Stdout, delta)
+	return exitcode.OK
+}
+
 func (a *App) Sync() int {
 	to := a.To
 	if to == "" {
@@ -195,7 +251,25 @@ func (a *App) Sync() int {
 		return code
 	}
 
-	fmt.Fprint(a.Stdout, graph.FormatReport(graph.DiffGraphs(fromG, toG)))
+	d := graph.DiffGraphs(fromG, toG)
+	if d.Empty() || a.LLM == nil {
+		fmt.Fprint(a.Stdout, graph.FormatReport(d))
+		return exitcode.OK
+	}
+
+	subjects, err := a.Repo.LogSubjects(fr.From, to, 50, 8192)
+	if err != nil {
+		fmt.Fprintln(a.Stderr, err)
+		return exitcode.Fail
+	}
+	delta, err := a.LLM.Delta(context.Background(), d, subjects)
+	if err != nil {
+		fmt.Fprintln(a.Stderr, "llm delta:", err)
+		fmt.Fprint(a.Stdout, graph.FormatReport(d))
+		return exitcode.OK
+	}
+
+	fmt.Fprintln(a.Stdout, delta)
 	return exitcode.OK
 }
 

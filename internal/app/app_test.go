@@ -2,10 +2,13 @@ package app
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/j75689/archon/internal/doc"
@@ -14,6 +17,7 @@ import (
 	"github.com/j75689/archon/internal/graph"
 	"github.com/j75689/archon/internal/lang"
 	"github.com/j75689/archon/internal/lang/golang"
+	"github.com/j75689/archon/internal/llm"
 )
 
 func gitOK(t *testing.T) {
@@ -278,6 +282,73 @@ func TestSyncPreservesRationaleAndReplacesAnchoredRegion(t *testing.T) {
 	want := strings.TrimSuffix(graph.RenderMermaid(g), "\n")
 	if region != want {
 		t.Fatalf("region %q want %q", region, want)
+	}
+}
+
+func TestChangelogPrintsReportWithoutLLM(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
+
+	a, out, errb := newApp(t, dir)
+	if code := a.Changelog(); code != exitcode.OK {
+		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
+	}
+	if !strings.Contains(out.String(), "added nodes:") {
+		t.Fatalf("stdout %q", out.String())
+	}
+	if strings.Contains(errb.String(), "llm") {
+		t.Fatalf("stderr %q", errb.String())
+	}
+}
+
+func TestChangelogSkipsLLMForPrivateOnlyChange(t *testing.T) {
+	dir := initRepo(t)
+	mustCommitFile(t, dir, "a.go", "package m\nfunc unexported() { println(1) }\n", "body1")
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "a.go", "package m\nfunc unexported() { println(2) }\n", "body2")
+
+	var requests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"should not happen"}}]}`))
+	}))
+	defer srv.Close()
+
+	a, out, errb := newApp(t, dir)
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
+	if code := a.Changelog(); code != exitcode.OK {
+		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
+	}
+	if out.String() != "No first-party dependency changes.\n" {
+		t.Fatalf("stdout %q", out.String())
+	}
+	if got := atomic.LoadInt32(&requests); got != 0 {
+		t.Fatalf("requests = %d", got)
+	}
+}
+
+func TestSyncFallsBackToReportWhenLLMFails(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	a, out, errb := newApp(t, dir)
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
+	}
+	if !strings.Contains(out.String(), "added nodes:") {
+		t.Fatalf("stdout %q", out.String())
+	}
+	if !strings.Contains(errb.String(), "llm") {
+		t.Fatalf("stderr %q", errb.String())
 	}
 }
 

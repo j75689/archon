@@ -10,6 +10,7 @@ import (
 	"github.com/j75689/archon/internal/config"
 	"github.com/j75689/archon/internal/exitcode"
 	"github.com/j75689/archon/internal/git"
+	"github.com/j75689/archon/internal/llm"
 	"github.com/spf13/cobra"
 )
 
@@ -83,7 +84,13 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		a.Model = cfg.Model
 		a.BaseURL = cfg.BaseURL
 		a.APIKey = cfg.APIKey
-		a.LLM = cfg.LLM
+		if cfg.LLM {
+			a.LLM = &llm.Client{
+				BaseURL: cfg.BaseURL,
+				Model:   cfg.Model,
+				APIKey:  cfg.APIKey,
+			}
+		}
 		return a, nil
 	}
 
@@ -123,6 +130,19 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 				return err
 			}
 			return exitCodeErr(a.Sync())
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:   "changelog",
+		Short: "Print a graph diff and optional architecture delta",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := newApp()
+			if err != nil {
+				return err
+			}
+			return exitCodeErr(a.Changelog())
 		},
 	})
 
