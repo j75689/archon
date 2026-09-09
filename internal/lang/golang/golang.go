@@ -116,21 +116,73 @@ func parseModule(b []byte) (string, bool) {
 }
 
 func skipGenerated(src []byte) bool {
-	for _, line := range bytes.Split(src, []byte("\n")) {
-		t := bytes.TrimSpace(line)
-		if len(t) == 0 {
-			continue
+	for _, line := range headerCommentLines(src) {
+		if strings.Contains(line, "Code generated") && strings.Contains(line, "DO NOT EDIT") {
+			return true
 		}
-		if bytes.HasPrefix(t, []byte("//")) {
-			c := string(bytes.TrimSpace(t[2:]))
-			return strings.Contains(c, "Code generated") && strings.Contains(c, "DO NOT EDIT")
-		}
-		return false
 	}
 	return false
 }
 
 func skipIgnore(src []byte) bool {
-	s := string(src)
-	return strings.Contains(s, "//go:build ignore") || strings.Contains(s, "// +build ignore")
+	for _, line := range headerCommentLines(src) {
+		switch {
+		case strings.HasPrefix(line, "go:build"):
+			if strings.TrimSpace(strings.TrimPrefix(line, "go:build")) == "ignore" {
+				return true
+			}
+		case strings.HasPrefix(line, "+build"):
+			if strings.TrimSpace(strings.TrimPrefix(line, "+build")) == "ignore" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func headerCommentLines(src []byte) []string {
+	var lines []string
+	inBlockComment := false
+
+	for _, raw := range bytes.Split(src, []byte("\n")) {
+		line := string(bytes.TrimSpace(raw))
+		if inBlockComment {
+			if idx := strings.Index(line, "*/"); idx >= 0 {
+				lines = append(lines, strings.TrimSpace(line[:idx]))
+				inBlockComment = false
+				if strings.TrimSpace(line[idx+2:]) != "" {
+					return lines
+				}
+				continue
+			}
+			lines = append(lines, strings.TrimSpace(line))
+			continue
+		}
+
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "package ") {
+			return lines
+		}
+		if strings.HasPrefix(line, "//") {
+			lines = append(lines, strings.TrimSpace(strings.TrimPrefix(line, "//")))
+			continue
+		}
+		if strings.HasPrefix(line, "/*") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "/*"))
+			if idx := strings.Index(line, "*/"); idx >= 0 {
+				lines = append(lines, strings.TrimSpace(line[:idx]))
+				if strings.TrimSpace(line[idx+2:]) != "" {
+					return lines
+				}
+				continue
+			}
+			lines = append(lines, strings.TrimSpace(line))
+			inBlockComment = true
+			continue
+		}
+		return lines
+	}
+	return lines
 }
