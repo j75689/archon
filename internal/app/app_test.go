@@ -138,6 +138,23 @@ func TestDiffPrivateBodyOnly(t *testing.T) {
 	}
 }
 
+func TestCheckDocPathNotFile(t *testing.T) {
+	dir := initRepo(t)
+
+	docPath := filepath.Join(dir, "docs", "ARCHITECTURE.md")
+	if err := os.MkdirAll(docPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	a, _, errb := newApp(t, dir)
+	if code := a.Check(); code != exitcode.Fail {
+		t.Fatalf("doc is directory: code %d stderr %s", code, errb)
+	}
+	if strings.Contains(errb.String(), "archon sync") {
+		t.Fatalf("expected read error not gate message, got %s", errb)
+	}
+}
+
 func TestCheckMissingAndMatch(t *testing.T) {
 	dir := initRepo(t)
 

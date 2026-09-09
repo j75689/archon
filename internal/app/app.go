@@ -79,8 +79,12 @@ func (a *App) Check() int {
 
 	src, err := os.ReadFile(filepath.Join(a.Repo.Root, filepath.FromSlash(a.Doc)))
 	if err != nil {
-		fmt.Fprintln(a.Stderr, "architecture doc is stale or missing; run archon sync")
-		return exitcode.Gate
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintln(a.Stderr, "architecture doc is stale or missing; run archon sync")
+			return exitcode.Gate
+		}
+		fmt.Fprintln(a.Stderr, err)
+		return exitcode.Fail
 	}
 
 	region, ok, err := doc.ExtractRegion(src, a.Anchor)
