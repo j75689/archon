@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/j75689/archon/internal/graph"
+	"github.com/j75689/archon/internal/log"
 )
 
 type Client struct {
@@ -18,6 +19,7 @@ type Client struct {
 	Model   string
 	APIKey  string
 	HTTP    *http.Client
+	Log     log.Logger
 }
 
 type chatRequest struct {
@@ -66,6 +68,7 @@ func (c *Client) Delta(ctx context.Context, d graph.Diff, subjects []string) (st
 		req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
 
+	log.OrNop(c.Log).Info(fmt.Sprintf("llm: POST %s model=%s", url, c.Model))
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return "", err
@@ -99,6 +102,7 @@ func (c *Client) Delta(ctx context.Context, d graph.Diff, subjects []string) (st
 	if content == "" {
 		return "", fmt.Errorf("llm response missing content")
 	}
+	log.OrNop(c.Log).Info("llm: done")
 	return content, nil
 }
 

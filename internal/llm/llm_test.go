@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/j75689/archon/internal/graph"
+	"github.com/j75689/archon/internal/log"
 )
 
 func TestDeltaSendsReportAndSubjectsOnly(t *testing.T) {
@@ -80,6 +82,70 @@ func TestDeltaSendsReportAndSubjectsOnly(t *testing.T) {
 	}
 	if strings.Contains(body, "func unexported") {
 		t.Fatalf("request leaked fixture body: %s", body)
+	}
+}
+
+func TestDeltaLogsPostAndDoneWithoutSecrets(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"Architecture delta summary."}}]}`)
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	c := &Client{
+		BaseURL: srv.URL,
+		Model:   "gpt-test",
+		APIKey:  "sk-test-secret",
+		HTTP:    srv.Client(),
+		Log:     log.Writer{W: &buf, Level: 1},
+	}
+	if _, err := c.Delta(context.Background(), graph.Diff{
+		AddedEdges: []graph.Edge{{From: "example.com/m", To: "example.com/m/api"}},
+	}, []string{"add api edge"}); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	wantPost := "llm: POST " + srv.URL + "/chat/completions model=gpt-test\n"
+	if !strings.Contains(got, wantPost) {
+		t.Fatalf("missing POST: %q", got)
+	}
+	if !strings.Contains(got, "llm: done\n") {
+		t.Fatalf("missing done: %q", got)
+	}
+	if strings.Index(got, wantPost) > strings.Index(got, "llm: done\n") {
+		t.Fatalf("POST must precede done: %q", got)
+	}
+	if strings.Contains(got, "sk-test-secret") || strings.Contains(got, "Authorization") {
+		t.Fatalf("leaked secret: %q", got)
+	}
+}
+
+func TestDeltaHTTPErrorLogsPostNotDone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	c := &Client{
+		BaseURL: srv.URL,
+		Model:   "gpt-test",
+		HTTP:    srv.Client(),
+		Log:     log.Writer{W: &buf, Level: 1},
+	}
+	_, err := c.Delta(context.Background(), graph.Diff{
+		AddedNodes: []graph.Node{{Key: "example.com/m/b"}},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	got := buf.String()
+	if !strings.Contains(got, "llm: POST "+srv.URL+"/chat/completions model=gpt-test\n") {
+		t.Fatalf("missing POST: %q", got)
+	}
+	if strings.Contains(got, "llm: done") {
+		t.Fatalf("must not log done on error: %q", got)
 	}
 }
 
