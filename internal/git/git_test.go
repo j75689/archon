@@ -1,14 +1,17 @@
 package git
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/j75689/archon/internal/lang/golang"
+	"github.com/j75689/archon/internal/log"
 )
 
 func gitOK(t *testing.T) {
@@ -106,6 +109,43 @@ func TestOpenAndSnapshot(t *testing.T) {
 	}
 	if _, ok := s.Files["readme.txt"]; ok {
 		t.Fatal("should not fetch non-go files")
+	}
+}
+
+func TestSnapshotLogsRevCountAndSortedPaths(t *testing.T) {
+	dir := initRepo(t)
+	r, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	r.Log = log.Writer{W: &buf, Level: 2}
+	if _, err := r.Snapshot("HEAD", golang.WantFile); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "snapshot HEAD: 2 files") {
+		t.Fatalf("missing info: %q", got)
+	}
+	infoIdx := strings.Index(got, "snapshot HEAD: 2 files\n")
+	aIdx := strings.Index(got, "snapshot: a.go\n")
+	modIdx := strings.Index(got, "snapshot: go.mod\n")
+	if infoIdx < 0 || aIdx < 0 || modIdx < 0 {
+		t.Fatalf("missing lines: %q", got)
+	}
+	if !(infoIdx < aIdx && aIdx < modIdx) {
+		t.Fatalf("want info then sorted paths, got %q", got)
+	}
+}
+
+func TestSnapshotSilentWithoutLogger(t *testing.T) {
+	dir := initRepo(t)
+	r, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Snapshot("HEAD", golang.WantFile); err != nil {
+		t.Fatal(err)
 	}
 }
 

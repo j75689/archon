@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/j75689/archon/internal/lang"
+	"github.com/j75689/archon/internal/log"
 )
 
 var (
@@ -19,6 +21,7 @@ var (
 type Repo struct {
 	Root string
 	Bin  string
+	Log  log.Logger
 }
 
 func Open(startDir string) (*Repo, error) {
@@ -66,6 +69,17 @@ func (r *Repo) Snapshot(rev string, want func(string) bool) (lang.Snapshot, erro
 			return lang.Snapshot{}, err
 		}
 		files[path] = body
+	}
+
+	lg := log.OrNop(r.Log)
+	lg.Info(fmt.Sprintf("snapshot %s: %d files", rev, len(files)))
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		lg.Debug("snapshot: " + p)
 	}
 
 	return lang.Snapshot{Rev: resolved, Files: files}, nil
