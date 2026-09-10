@@ -41,7 +41,7 @@ Text **outside** the comments is never modified. `archon sync` replaces only the
 
 ## Commands
 
-Shared flags: `--from` (left revision), `--to` (default `HEAD`), `--doc` (path relative to the repo root).
+Shared flags: `--from` (left revision), `--to` (default `HEAD`), `--doc` (path relative to the repo root), `-v` / `-vv` (progress on stderr; repeat for per-file).
 
 | Command | What it does | Exit 1 when |
 |---|---|---|

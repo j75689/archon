@@ -102,6 +102,39 @@ func TestRunChangelogContinuesOnLLMError(t *testing.T) {
 	}
 }
 
+func TestRunCheckVerboseAndQuiet(t *testing.T) {
+	dir := initRepo(t)
+	t.Chdir(dir)
+
+	var syncOut, syncErr bytes.Buffer
+	if code := run([]string{"sync"}, &syncOut, &syncErr); code != exitcode.OK {
+		t.Fatalf("sync code=%d stderr=%q", code, syncErr.String())
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"check"}, &stdout, &stderr); code != exitcode.OK {
+		t.Fatalf("quiet check code=%d stderr=%q", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout=%q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("quiet stderr must be empty: %q", stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"check", "-v"}, &stdout, &stderr); code != exitcode.OK {
+		t.Fatalf("verbose check code=%d stderr=%q", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout=%q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "snapshot") {
+		t.Fatalf("verbose stderr=%q", stderr.String())
+	}
+}
+
 func gitOK(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {

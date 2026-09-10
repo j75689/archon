@@ -11,6 +11,7 @@ import (
 	"github.com/j75689/archon/internal/exitcode"
 	"github.com/j75689/archon/internal/git"
 	"github.com/j75689/archon/internal/llm"
+	"github.com/j75689/archon/internal/log"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +39,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 	var from string
 	var to string
 	var doc string
+	var verbose int
 
 	root := &cobra.Command{
 		Use:           "archon",
@@ -50,6 +52,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().StringVar(&from, "from", "", "git revision for the left side of a drift comparison")
 	root.PersistentFlags().StringVar(&to, "to", "HEAD", "git revision to inspect")
 	root.PersistentFlags().StringVar(&doc, "doc", "", "architecture markdown path relative to repo root")
+	root.PersistentFlags().CountVarP(&verbose, "verbose", "v", "progress on stderr; repeat for per-file (-vv)")
 
 	newApp := func() (*app.App, error) {
 		repo, err := git.Open(".")
@@ -77,6 +80,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		a := app.New(repo)
 		a.Stdout = stdout
 		a.Stderr = stderr
+		a.Log = log.FromVerbose(stderr, verbose)
 		a.From = cfg.From
 		a.To = cfg.To
 		a.Doc = cfg.Doc
