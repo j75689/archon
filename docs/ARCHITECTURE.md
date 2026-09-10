@@ -15,11 +15,13 @@ flowchart LR
   n_internal_lang["internal/lang"]
   n_internal_lang_golang["internal/lang/golang"]
   n_internal_llm["internal/llm"]
+  n_internal_log["internal/log"]
   n_cmd_archon --> n_internal_app
   n_cmd_archon --> n_internal_config
   n_cmd_archon --> n_internal_exitcode
   n_cmd_archon --> n_internal_git
   n_cmd_archon --> n_internal_llm
+  n_cmd_archon --> n_internal_log
   n_internal_app --> n_internal_doc
   n_internal_app --> n_internal_exitcode
   n_internal_app --> n_internal_git
@@ -27,10 +29,14 @@ flowchart LR
   n_internal_app --> n_internal_lang
   n_internal_app --> n_internal_lang_golang
   n_internal_app --> n_internal_llm
+  n_internal_app --> n_internal_log
   n_internal_git --> n_internal_lang
+  n_internal_git --> n_internal_log
   n_internal_lang --> n_internal_graph
   n_internal_lang_golang --> n_internal_graph
   n_internal_lang_golang --> n_internal_lang
+  n_internal_lang_golang --> n_internal_log
   n_internal_llm --> n_internal_graph
+  n_internal_llm --> n_internal_log
 ```
 <!-- ARCHON:END:data-flow -->
