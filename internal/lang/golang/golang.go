@@ -11,11 +11,14 @@ import (
 
 	"github.com/j75689/archon/internal/graph"
 	"github.com/j75689/archon/internal/lang"
+	"github.com/j75689/archon/internal/log"
 )
 
 var moduleLine = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 
-type Extractor struct{}
+type Extractor struct {
+	Log log.Logger
+}
 
 func (Extractor) Name() string { return "go" }
 
@@ -40,7 +43,7 @@ func WantFile(p string) bool {
 	return true
 }
 
-func (Extractor) Extract(s lang.Snapshot) (graph.Graph, error) {
+func (e Extractor) Extract(s lang.Snapshot) (graph.Graph, error) {
 	mod, ok := parseModule(s.Files["go.mod"])
 	if !ok {
 		return graph.Graph{}, fmt.Errorf("%s: missing or invalid go.mod", s.Rev)
@@ -54,15 +57,22 @@ func (Extractor) Extract(s lang.Snapshot) (graph.Graph, error) {
 
 	pkgs := map[string]*pkg{}
 	fset := token.NewFileSet()
+	lg := log.OrNop(e.Log)
 
 	for p, src := range s.Files {
 		if p == "go.mod" || !WantFile(p) {
 			continue
 		}
-		if skipGenerated(src) || skipIgnore(src) {
+		if skipGenerated(src) {
+			lg.Debug("skip: " + p + " (generated)")
+			continue
+		}
+		if skipIgnore(src) {
+			lg.Debug("skip: " + p + " (ignore)")
 			continue
 		}
 
+		lg.Debug("parse: " + p)
 		af, err := parser.ParseFile(fset, p, src, parser.ParseComments)
 		if err != nil {
 			return graph.Graph{}, fmt.Errorf("%s: %w", p, err)
