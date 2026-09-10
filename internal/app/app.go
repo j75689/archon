@@ -16,6 +16,7 @@ import (
 	"github.com/j75689/archon/internal/lang"
 	"github.com/j75689/archon/internal/lang/golang"
 	"github.com/j75689/archon/internal/llm"
+	"github.com/j75689/archon/internal/log"
 )
 
 type App struct {
@@ -29,6 +30,7 @@ type App struct {
 	BaseURL string
 	APIKey  string
 	LLM     *llm.Client
+	Log     log.Logger
 	Stdout  io.Writer
 	Stderr  io.Writer
 }
@@ -47,6 +49,27 @@ func New(repo *git.Repo) *App {
 	}
 }
 
+func (a *App) attachLog() {
+	l := log.OrNop(a.Log)
+	if a.Repo != nil {
+		a.Repo.Log = l
+	}
+	switch ext := a.Ext.(type) {
+	case golang.Extractor:
+		ext.Log = l
+		a.Ext = ext
+	case *golang.Extractor:
+		ext.Log = l
+	}
+	if a.LLM != nil {
+		a.LLM.Log = l
+	}
+}
+
+func (a *App) log() log.Logger {
+	return log.OrNop(a.Log)
+}
+
 func (a *App) graphAt(rev string) (graph.Graph, int) {
 	snap, err := a.Repo.Snapshot(rev, golang.WantFile)
 	if err != nil {
@@ -62,15 +85,18 @@ func (a *App) graphAt(rev string) (graph.Graph, int) {
 		fmt.Fprintln(a.Stderr, err)
 		return graph.Graph{}, exitcode.Fail
 	}
+	a.log().Info(fmt.Sprintf("extract go: %d packages, %d edges", len(g.Nodes), len(g.Edges)))
 	g, err = graph.Compile(g)
 	if err != nil {
 		fmt.Fprintln(a.Stderr, err)
 		return graph.Graph{}, exitcode.Fail
 	}
+	a.log().Info(fmt.Sprintf("compile: %d nodes, %d edges", len(g.Nodes), len(g.Edges)))
 	return g, exitcode.OK
 }
 
 func (a *App) Check() int {
+	a.attachLog()
 	if a.From != "" {
 		fmt.Fprintln(a.Stderr, "warning: --from is ignored by check")
 	}
@@ -88,6 +114,7 @@ func (a *App) Check() int {
 	src, err := os.ReadFile(filepath.Join(a.Repo.Root, filepath.FromSlash(a.Doc)))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			a.log().Info(fmt.Sprintf("compare %s anchor=%s: stale", a.Doc, a.Anchor))
 			fmt.Fprintln(a.Stderr, "architecture doc is stale or missing; run archon sync")
 			return exitcode.Gate
 		}
@@ -104,14 +131,17 @@ func (a *App) Check() int {
 	want := strings.TrimSpace(doc.NormalizeNL(graph.RenderMermaid(g)))
 	got := strings.TrimSpace(doc.NormalizeNL(region))
 	if !ok || got != want {
+		a.log().Info(fmt.Sprintf("compare %s anchor=%s: stale", a.Doc, a.Anchor))
 		fmt.Fprintln(a.Stderr, "architecture doc is stale or missing; run archon sync")
 		return exitcode.Gate
 	}
 
+	a.log().Info(fmt.Sprintf("compare %s anchor=%s: match", a.Doc, a.Anchor))
 	return exitcode.OK
 }
 
 func (a *App) Diff() int {
+	a.attachLog()
 	to := a.To
 	if to == "" {
 		to = "HEAD"
@@ -150,6 +180,7 @@ func (a *App) Diff() int {
 }
 
 func (a *App) Changelog() int {
+	a.attachLog()
 	to := a.To
 	if to == "" {
 		to = "HEAD"
@@ -204,6 +235,7 @@ func (a *App) Changelog() int {
 }
 
 func (a *App) Sync() int {
+	a.attachLog()
 	to := a.To
 	if to == "" {
 		to = "HEAD"

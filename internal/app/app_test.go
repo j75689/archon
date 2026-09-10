@@ -20,6 +20,7 @@ import (
 	"github.com/j75689/archon/internal/lang"
 	"github.com/j75689/archon/internal/lang/golang"
 	"github.com/j75689/archon/internal/llm"
+	"github.com/j75689/archon/internal/log"
 )
 
 func gitOK(t *testing.T) {
@@ -211,6 +212,100 @@ func TestCheckMissingAndMatch(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "--from is ignored") {
 		t.Fatalf("stderr %s", errb)
+	}
+}
+
+func TestCheckVerboseMatchAndStale(t *testing.T) {
+	dir := initRepo(t)
+
+	r, err := git.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := r.Snapshot("HEAD", golang.WantFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := graph.Compile(mustExtract(t, snap))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := graph.RenderMermaid(g)
+	body := "# Architecture\n\n<!-- ARCHON:START:data-flow -->\n" + payload + "<!-- ARCHON:END:data-flow -->\n"
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	docPath := filepath.Join(dir, "docs", "ARCHITECTURE.md")
+	if err := os.WriteFile(docPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a, out, errb := newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	if code := a.Check(); code != exitcode.OK {
+		t.Fatalf("match code %d stderr %s", code, errb)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout must stay empty: %q", out)
+	}
+	got := errb.String()
+	for _, want := range []string{
+		"snapshot HEAD:",
+		"extract go:",
+		"compile:",
+		"compare docs/ARCHITECTURE.md anchor=data-flow: match",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "snapshot: a.go") {
+		t.Fatalf("level 1 must not include per-file: %q", got)
+	}
+
+	stale := strings.Replace(body, payload, "```mermaid\nflowchart LR\n```\n", 1)
+	if err := os.WriteFile(docPath, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, _, errb = newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	if code := a.Check(); code != exitcode.Gate {
+		t.Fatalf("stale code %d", code)
+	}
+	if !strings.Contains(errb.String(), "compare docs/ARCHITECTURE.md anchor=data-flow: stale") {
+		t.Fatalf("missing stale compare: %q", errb)
+	}
+	if !strings.Contains(errb.String(), "architecture doc is stale or missing; run archon sync") {
+		t.Fatalf("missing gate line: %q", errb)
+	}
+}
+
+func TestCheckVerboseLevel2IncludesSnapshotPath(t *testing.T) {
+	dir := initRepo(t)
+	a, _, errb := newApp(t, dir)
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("sync %d %s", code, errb)
+	}
+
+	a, _, errb = newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 2}
+	if code := a.Check(); code != exitcode.OK {
+		t.Fatalf("check %d %s", code, errb)
+	}
+	if !strings.Contains(errb.String(), "snapshot: a.go") {
+		t.Fatalf("level 2 missing path: %q", errb)
+	}
+}
+
+func TestCheckMissingDocLogsStaleCompare(t *testing.T) {
+	dir := initRepo(t)
+	a, _, errb := newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	if code := a.Check(); code != exitcode.Gate {
+		t.Fatalf("code %d", code)
+	}
+	if !strings.Contains(errb.String(), "compare docs/ARCHITECTURE.md anchor=data-flow: stale") {
+		t.Fatalf("stderr %q", errb)
 	}
 }
 
