@@ -713,6 +713,149 @@ func TestChangelogWarnsAndPrintsReportWhenLogSubjectsFails(t *testing.T) {
 	}
 }
 
+func TestDiffVerboseResolveFromAndEmpty(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	a, _, errb := newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	if code := a.Diff(); code != exitcode.OK {
+		t.Fatalf("empty diff code %d %s", code, errb)
+	}
+	if !strings.Contains(errb.String(), "resolve from: empty (same commit)") {
+		t.Fatalf("stderr %q", errb)
+	}
+
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "b")
+	a, out, errb := newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	if code := a.Diff(); code != exitcode.Gate {
+		t.Fatalf("code %d out %s stderr %s", code, out, errb)
+	}
+	if !strings.Contains(errb.String(), "resolve from: v1.0.0") {
+		t.Fatalf("stderr %q", errb)
+	}
+}
+
+func TestSyncVerboseWriteAndSkipNoClient(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "b")
+
+	a, out, errb := newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("code %d %s %s", code, out, errb)
+	}
+	if !strings.Contains(errb.String(), "write docs/ARCHITECTURE.md") {
+		t.Fatalf("missing write: %q", errb)
+	}
+	if !strings.Contains(errb.String(), "llm: skip (no client)") {
+		t.Fatalf("missing skip: %q", errb)
+	}
+	if !strings.Contains(out.String(), "added nodes:") {
+		t.Fatalf("stdout %q", out)
+	}
+}
+
+func TestChangelogVerboseSkipNoClientAndNoLLMOnEmptyDiff(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "b")
+
+	a, _, errb := newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	if code := a.Changelog(); code != exitcode.OK {
+		t.Fatalf("code %d %s", code, errb)
+	}
+	if !strings.Contains(errb.String(), "llm: skip (no client)") {
+		t.Fatalf("stderr %q", errb)
+	}
+
+	dir = initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	a, _, errb = newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	if code := a.Changelog(); code != exitcode.OK {
+		t.Fatalf("empty code %d %s", code, errb)
+	}
+	if strings.Contains(errb.String(), "llm:") {
+		t.Fatalf("empty diff must not log llm: %q", errb)
+	}
+}
+
+func TestChangelogVerboseLLMErrorSkip(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	a, _, errb := newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
+	if code := a.Changelog(); code != exitcode.OK {
+		t.Fatalf("code %d %s", code, errb)
+	}
+	got := errb.String()
+	if !strings.Contains(got, "llm: POST "+srv.URL+"/chat/completions model=gpt-test") {
+		t.Fatalf("missing POST: %q", got)
+	}
+	if !strings.Contains(got, "llm: skip (error)") {
+		t.Fatalf("missing skip: %q", got)
+	}
+	if !strings.Contains(got, "llm delta:") {
+		t.Fatalf("missing always-on error: %q", got)
+	}
+	if strings.Contains(got, "llm: done") {
+		t.Fatalf("must not log done: %q", got)
+	}
+}
+
+func TestChangelogVerboseSkipSubjects(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
+
+	r, err := git.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _, errb := newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	a.Repo = r
+	a.LLM = &llm.Client{BaseURL: "http://127.0.0.1:1", Model: "gpt-test"}
+	a.Ext = &seqExtractor{
+		match: true,
+		extracts: []func(lang.Snapshot) (graph.Graph, error){
+			func(lang.Snapshot) (graph.Graph, error) {
+				return graph.Graph{Nodes: []graph.Node{{Key: "example.com/m", Label: "."}}}, nil
+			},
+			func(lang.Snapshot) (graph.Graph, error) {
+				a.Repo.Bin = filepath.Join(dir, "missing-git")
+				return graph.Graph{
+					Nodes: []graph.Node{
+						{Key: "example.com/m", Label: "."},
+						{Key: "example.com/m/b", Label: "b"},
+					},
+					Edges: []graph.Edge{{From: "example.com/m", To: "example.com/m/b"}},
+				}, nil
+			},
+		},
+	}
+	if code := a.Changelog(); code != exitcode.OK {
+		t.Fatalf("code %d %s", code, errb)
+	}
+	if !strings.Contains(errb.String(), "llm: skip (subjects)") {
+		t.Fatalf("stderr %q", errb)
+	}
+	if !strings.Contains(errb.String(), "warning:") {
+		t.Fatalf("stderr %q", errb)
+	}
+}
+
 func mustExtract(t *testing.T, snap lang.Snapshot) graph.Graph {
 	t.Helper()
 	var e golang.Extractor

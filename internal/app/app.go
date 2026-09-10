@@ -158,9 +158,11 @@ func (a *App) Diff() int {
 	}
 
 	if fr.EmptyDiff {
+		a.log().Info("resolve from: empty (same commit)")
 		fmt.Fprint(a.Stdout, graph.FormatReport(graph.Diff{}))
 		return exitcode.OK
 	}
+	a.log().Info("resolve from: " + fr.From)
 
 	fromG, code := a.graphAt(fr.From)
 	if code != exitcode.OK {
@@ -197,9 +199,11 @@ func (a *App) Changelog() int {
 	}
 
 	if fr.EmptyDiff {
+		a.log().Info("resolve from: empty (same commit)")
 		fmt.Fprint(a.Stdout, graph.FormatReport(graph.Diff{}))
 		return exitcode.OK
 	}
+	a.log().Info("resolve from: " + fr.From)
 
 	fromG, code := a.graphAt(fr.From)
 	if code != exitcode.OK {
@@ -212,17 +216,23 @@ func (a *App) Changelog() int {
 
 	d := graph.DiffGraphs(fromG, toG)
 	fmt.Fprint(a.Stdout, graph.FormatReport(d))
-	if d.Empty() || a.LLM == nil {
+	if d.Empty() {
+		return exitcode.OK
+	}
+	if a.LLM == nil {
+		a.log().Info("llm: skip (no client)")
 		return exitcode.OK
 	}
 
 	subjects, err := a.Repo.LogSubjects(fr.From, to, 50, 8192)
 	if err != nil {
+		a.log().Info("llm: skip (subjects)")
 		fmt.Fprintln(a.Stderr, "warning:", err)
 		return exitcode.OK
 	}
 	delta, err := a.LLM.Delta(context.Background(), d, subjects)
 	if err != nil {
+		a.log().Info("llm: skip (error)")
 		fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
 		return exitcode.OK
 	}
@@ -262,6 +272,7 @@ func (a *App) Sync() int {
 		fmt.Fprintln(a.Stderr, err)
 		return exitcode.Fail
 	}
+	a.log().Info("write " + a.Doc)
 
 	fr, err := a.Repo.ResolveFrom(to, a.From)
 	if err != nil {
@@ -274,9 +285,11 @@ func (a *App) Sync() int {
 	}
 
 	if fr.EmptyDiff {
+		a.log().Info("resolve from: empty (same commit)")
 		fmt.Fprint(a.Stdout, graph.FormatReport(graph.Diff{}))
 		return exitcode.OK
 	}
+	a.log().Info("resolve from: " + fr.From)
 
 	fromG, code := a.graphAt(fr.From)
 	if code != exitcode.OK {
@@ -284,19 +297,26 @@ func (a *App) Sync() int {
 	}
 
 	d := graph.DiffGraphs(fromG, toG)
-	if d.Empty() || a.LLM == nil {
+	if d.Empty() {
+		fmt.Fprint(a.Stdout, graph.FormatReport(d))
+		return exitcode.OK
+	}
+	if a.LLM == nil {
+		a.log().Info("llm: skip (no client)")
 		fmt.Fprint(a.Stdout, graph.FormatReport(d))
 		return exitcode.OK
 	}
 
 	subjects, err := a.Repo.LogSubjects(fr.From, to, 50, 8192)
 	if err != nil {
+		a.log().Info("llm: skip (subjects)")
 		fmt.Fprintln(a.Stderr, "warning:", err)
 		fmt.Fprint(a.Stdout, graph.FormatReport(d))
 		return exitcode.OK
 	}
 	delta, err := a.LLM.Delta(context.Background(), d, subjects)
 	if err != nil {
+		a.log().Info("llm: skip (error)")
 		fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
 		fmt.Fprint(a.Stdout, graph.FormatReport(d))
 		return exitcode.OK
