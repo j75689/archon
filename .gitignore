@@ -1,5 +1,6 @@
 .idea/
 .worktrees/
+bin/
 .cursor/
 .vscode/
 .DS_Store
