@@ -185,6 +185,18 @@ func Hash(g graph.Graph, apis lang.APISet) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+func GraphFromLock(lf Lockfile) graph.Graph {
+	nodes := make([]graph.Node, len(lf.Graph.Nodes))
+	for i, n := range lf.Graph.Nodes {
+		nodes[i] = graph.Node{Key: n.Key, Label: n.Label}
+	}
+	edges := make([]graph.Edge, len(lf.Graph.Edges))
+	for i, e := range lf.Graph.Edges {
+		edges[i] = graph.Edge{From: e.From, To: e.To}
+	}
+	return graph.Graph{Nodes: nodes, Edges: edges}
+}
+
 func NewLockfile(g graph.Graph, apis lang.APISet) (Lockfile, error) {
 	h, err := Hash(g, apis)
 	if err != nil {

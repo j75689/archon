@@ -2,8 +2,7 @@ package app
 
 import (
 	"bytes"
-	"errors"
-	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,7 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/j75689/archon/internal/doc"
+	"github.com/j75689/archon/internal/config"
 	"github.com/j75689/archon/internal/exitcode"
 	"github.com/j75689/archon/internal/fingerprint"
 	"github.com/j75689/archon/internal/git"
@@ -311,51 +310,126 @@ func writeHEADLockfile(t *testing.T, dir string) {
 	}
 }
 
-func TestSyncPreservesRationaleAndReplacesAnchoredRegion(t *testing.T) {
+func TestSyncNoOpWhenLockfileCurrent(t *testing.T) {
 	dir := initRepo(t)
+	writeHEADLockfile(t, dir)
+	var n int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&n, 1)
+	}))
+	defer srv.Close()
+	a, _, _ := newApp(t, dir)
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "t", HTTP: srv.Client()}
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatal(code)
+	}
+	if atomic.LoadInt32(&n) != 0 {
+		t.Fatalf("requests %d", n)
+	}
+}
 
+func TestSyncWritesGeneratorsAndLockfile(t *testing.T) {
+	dir := initRepo(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "func hidden") || strings.Contains(string(body), "println") {
+			t.Error("leaked body")
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"# doc\n"}}]}`))
+	}))
+	defer srv.Close()
+	a, _, errb := newApp(t, dir)
+	a.Log = log.Writer{W: errb, Level: 1}
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "t", HTTP: srv.Client()}
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("%d %s", code, errb)
+	}
+	for _, p := range []string{"docs/ARCHITECTURE.md", "docs/WORKFLOW.md", "docs/PACKAGES.md"} {
+		b, err := os.ReadFile(filepath.Join(dir, p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != "# doc\n" {
+			t.Fatalf("%s %q", p, b)
+		}
+		if !strings.Contains(errb.String(), "write "+p) {
+			t.Fatalf("missing write %s: %q", p, errb)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".archon", "graph.json")); err != nil {
+		t.Fatal(err)
+	}
+	a2, _, _ := newApp(t, dir)
+	if code := a2.Check(); code != exitcode.OK {
+		t.Fatalf("check %d", code)
+	}
+}
+
+func TestSyncLLMErrorLeavesFilesUntouched(t *testing.T) {
+	dir := initRepo(t)
 	docPath := filepath.Join(dir, "docs", "ARCHITECTURE.md")
 	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	const rationale = "# Architecture\n\nThis rationale must survive.\n\n"
-	const stale = "<!-- ARCHON:START:data-flow -->\n```mermaid\nflowchart LR\n  stale[\"stale\"]\n```\n<!-- ARCHON:END:data-flow -->\n"
-	if err := os.WriteFile(docPath, []byte(rationale+stale), 0o644); err != nil {
+	if err := os.WriteFile(docPath, []byte("keep\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	a, out, errb := newApp(t, dir)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	a, _, errb := newApp(t, dir)
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "t", HTTP: srv.Client()}
 	if code := a.Sync(); code != exitcode.OK {
-		t.Fatalf("sync code %d stdout %s stderr %s", code, out, errb)
+		t.Fatal(code)
 	}
+	b, _ := os.ReadFile(docPath)
+	if string(b) != "keep\n" {
+		t.Fatalf("overwrote %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".archon", "graph.json")); !os.IsNotExist(err) {
+		t.Fatalf("lockfile written: %v", err)
+	}
+	if !strings.Contains(errb.String(), "llm") {
+		t.Fatalf("stderr %q", errb)
+	}
+}
 
-	body, err := os.ReadFile(docPath)
-	if err != nil {
-		t.Fatal(err)
+func TestSyncSkipNoClientDoesNotWriteLockfile(t *testing.T) {
+	dir := initRepo(t)
+	a, _, errb := newApp(t, dir)
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatal(code)
 	}
-	if !strings.Contains(string(body), "This rationale must survive.") {
-		t.Fatalf("rationale lost: %s", body)
+	if !strings.Contains(errb.String(), "llm: skip (no client)") {
+		t.Fatalf("stderr %q", errb)
 	}
-	region, ok, err := doc.ExtractRegion(body, "data-flow")
-	if err != nil || !ok {
-		t.Fatalf("extract: ok=%v err=%v", ok, err)
+	if _, err := os.Stat(filepath.Join(dir, ".archon", "graph.json")); !os.IsNotExist(err) {
+		t.Fatal("lockfile")
 	}
+}
 
-	r, err := git.Open(dir)
-	if err != nil {
+func TestSyncUserPromptAppearsInRequest(t *testing.T) {
+	dir := initRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "custom.md"), []byte("UNIQUE_PROMPT_TOKEN\n{{.Graph}}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	snap, err := r.Snapshot("HEAD", golang.WantFile)
-	if err != nil {
-		t.Fatal(err)
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = string(b)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+	a, _, _ := newApp(t, dir)
+	a.Generators = []config.Generator{{ID: "architecture", Path: "docs/ARCHITECTURE.md", Prompt: "custom.md"}}
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "t", HTTP: srv.Client()}
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatal(code)
 	}
-	g, err := graph.Compile(mustExtract(t, snap))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := strings.TrimSuffix(graph.RenderMermaid(g), "\n")
-	if region != want {
-		t.Fatalf("region %q want %q", region, want)
+	if !strings.Contains(got, "UNIQUE_PROMPT_TOKEN") {
+		t.Fatalf("request %s", got)
 	}
 }
 
@@ -414,177 +488,6 @@ func TestChangelogSkipsLLMForPrivateOnlyChange(t *testing.T) {
 	}
 }
 
-func assertOneStderrLine(t *testing.T, stderr string) {
-	t.Helper()
-	if stderr == "" {
-		t.Fatal("expected stderr")
-	}
-	if !strings.HasSuffix(stderr, "\n") {
-		t.Fatalf("stderr must end with newline: %q", stderr)
-	}
-	inner := strings.TrimSuffix(stderr, "\n")
-	if strings.Contains(inner, "\n") {
-		t.Fatalf("stderr must be one line, got %q", stderr)
-	}
-}
-
-func TestSyncFallsBackToReportWhenLLMFails(t *testing.T) {
-	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	a, out, errb := newApp(t, dir)
-	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
-	if code := a.Sync(); code != exitcode.OK {
-		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
-	}
-	if !strings.Contains(out.String(), "added nodes:") {
-		t.Fatalf("stdout %q", out.String())
-	}
-	if !strings.Contains(errb.String(), "llm") {
-		t.Fatalf("stderr %q", errb.String())
-	}
-	assertOneStderrLine(t, errb.String())
-}
-
-type seqExtractor struct {
-	match      bool
-	extracts   []func(lang.Snapshot) (graph.Graph, error)
-	defaultErr error
-}
-
-func (e *seqExtractor) Name() string { return "seq" }
-
-func (e *seqExtractor) Match(lang.Snapshot) bool { return e.match }
-
-func (e *seqExtractor) Extract(s lang.Snapshot) (graph.Graph, error) {
-	if len(e.extracts) == 0 {
-		if e.defaultErr != nil {
-			return graph.Graph{}, e.defaultErr
-		}
-		return graph.Graph{}, fmt.Errorf("unexpected extract call for %s", s.Rev)
-	}
-	fn := e.extracts[0]
-	e.extracts = e.extracts[1:]
-	return fn(s)
-}
-
-func (e *seqExtractor) ExtractAPIs(lang.Snapshot) (lang.APISet, error) {
-	return nil, nil
-}
-
-func TestSyncWarnsAndKeepsOKWhenResolveFromFailsAfterWrite(t *testing.T) {
-	dir := initRepo(t)
-
-	r, err := git.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, out, errb := newApp(t, dir)
-	a.Repo = r
-	a.Ext = &seqExtractor{
-		match: true,
-		extracts: []func(lang.Snapshot) (graph.Graph, error){
-			func(lang.Snapshot) (graph.Graph, error) {
-				a.Repo.Bin = filepath.Join(dir, "missing-git")
-				return graph.Graph{Nodes: []graph.Node{{Key: "example.com/m", Label: "."}}}, nil
-			},
-		},
-	}
-
-	if code := a.Sync(); code != exitcode.OK {
-		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errb.String())
-	}
-	if !strings.Contains(errb.String(), "git") {
-		t.Fatalf("stderr %q", errb.String())
-	}
-	if _, err := os.Stat(filepath.Join(dir, "docs", "ARCHITECTURE.md")); err != nil {
-		t.Fatalf("doc not written: %v", err)
-	}
-}
-
-func TestSyncWarnsAndKeepsOKWhenFromGraphFailsAfterWrite(t *testing.T) {
-	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
-
-	a, out, errb := newApp(t, dir)
-	a.Ext = &seqExtractor{
-		match: true,
-		extracts: []func(lang.Snapshot) (graph.Graph, error){
-			func(lang.Snapshot) (graph.Graph, error) {
-				return graph.Graph{
-					Nodes: []graph.Node{
-						{Key: "example.com/m", Label: "."},
-						{Key: "example.com/m/b", Label: "b"},
-					},
-					Edges: []graph.Edge{{From: "example.com/m", To: "example.com/m/b"}},
-				}, nil
-			},
-			func(lang.Snapshot) (graph.Graph, error) {
-				return graph.Graph{}, errors.New("from extract boom")
-			},
-		},
-	}
-
-	if code := a.Sync(); code != exitcode.OK {
-		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errb.String())
-	}
-	if !strings.Contains(errb.String(), "from extract boom") {
-		t.Fatalf("stderr %q", errb.String())
-	}
-	if _, err := os.Stat(filepath.Join(dir, "docs", "ARCHITECTURE.md")); err != nil {
-		t.Fatalf("doc not written: %v", err)
-	}
-}
-
-func TestSyncWarnsAndPrintsReportWhenLogSubjectsFails(t *testing.T) {
-	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
-
-	r, err := git.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, out, errb := newApp(t, dir)
-	a.Repo = r
-	a.LLM = &llm.Client{BaseURL: "http://127.0.0.1:1", Model: "gpt-test"}
-	a.Ext = &seqExtractor{
-		match: true,
-		extracts: []func(lang.Snapshot) (graph.Graph, error){
-			func(lang.Snapshot) (graph.Graph, error) {
-				return graph.Graph{
-					Nodes: []graph.Node{
-						{Key: "example.com/m", Label: "."},
-						{Key: "example.com/m/b", Label: "b"},
-					},
-					Edges: []graph.Edge{{From: "example.com/m", To: "example.com/m/b"}},
-				}, nil
-			},
-			func(lang.Snapshot) (graph.Graph, error) {
-				a.Repo.Bin = filepath.Join(dir, "missing-git")
-				return graph.Graph{Nodes: []graph.Node{{Key: "example.com/m", Label: "."}}}, nil
-			},
-		},
-	}
-
-	if code := a.Sync(); code != exitcode.OK {
-		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errb.String())
-	}
-	if !strings.Contains(errb.String(), "git") {
-		t.Fatalf("stderr %q", errb.String())
-	}
-	if !strings.Contains(out.String(), "added nodes:") {
-		t.Fatalf("stdout %q", out.String())
-	}
-}
-
 func TestDiffVerboseResolveFromAndEmpty(t *testing.T) {
 	dir := initRepo(t)
 	runGit(t, dir, "tag", "v1.0.0")
@@ -608,24 +511,15 @@ func TestDiffVerboseResolveFromAndEmpty(t *testing.T) {
 	}
 }
 
-func TestSyncVerboseWriteAndSkipNoClient(t *testing.T) {
+func TestSyncVerboseSkipNoClient(t *testing.T) {
 	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "b")
-
-	a, out, errb := newApp(t, dir)
+	a, _, errb := newApp(t, dir)
 	a.Log = log.Writer{W: errb, Level: 1}
 	if code := a.Sync(); code != exitcode.OK {
-		t.Fatalf("code %d %s %s", code, out, errb)
-	}
-	if !strings.Contains(errb.String(), "write docs/ARCHITECTURE.md") {
-		t.Fatalf("missing write: %q", errb)
+		t.Fatalf("code %d %s", code, errb)
 	}
 	if !strings.Contains(errb.String(), "llm: skip (no client)") {
 		t.Fatalf("missing skip: %q", errb)
-	}
-	if !strings.Contains(out.String(), "added nodes:") {
-		t.Fatalf("stdout %q", out)
 	}
 }
 

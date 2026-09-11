@@ -88,6 +88,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		a.Model = cfg.Model
 		a.BaseURL = cfg.BaseURL
 		a.APIKey = cfg.APIKey
+		a.Generators = cfg.Generators
 		if cfg.LLM {
 			a.LLM = &llm.Client{
 				BaseURL: cfg.BaseURL,

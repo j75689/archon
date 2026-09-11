@@ -250,3 +250,64 @@ func TestDeltaEmptyAssistantContent(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestCompleteSendsUserStringAndReturnsAssistantContent(t *testing.T) {
+	var got chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"# Generated\n"}}]}`)
+	}))
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
+	content, err := c.Complete(context.Background(), "rendered user prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "# Generated" {
+		t.Fatalf("content = %q", content)
+	}
+	if len(got.Messages) != 2 {
+		t.Fatalf("messages = %#v", got.Messages)
+	}
+	if got.Messages[0] != (chatMessage{
+		Role:    "system",
+		Content: "You write markdown documentation. Reply with the full document only.",
+	}) {
+		t.Fatalf("system message = %#v", got.Messages[0])
+	}
+	if got.Messages[1] != (chatMessage{Role: "user", Content: "rendered user prompt"}) {
+		t.Fatalf("user message = %#v", got.Messages[1])
+	}
+}
+
+func TestCompleteHTTPErrorLogsPostNotDone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	c := &Client{
+		BaseURL: srv.URL,
+		Model:   "gpt-test",
+		HTTP:    srv.Client(),
+		Log:     log.Writer{W: &buf, Level: 1},
+	}
+	if _, err := c.Complete(context.Background(), "prompt"); err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(buf.String(), "llm: POST ") {
+		t.Fatalf("missing POST: %q", buf.String())
+	}
+	if strings.Contains(buf.String(), "llm: done") {
+		t.Fatalf("must not log done on error: %q", buf.String())
+	}
+}

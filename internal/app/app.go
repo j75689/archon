@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/j75689/archon/internal/doc"
+	"strings"
+
+	"github.com/j75689/archon/internal/config"
 	"github.com/j75689/archon/internal/exitcode"
 	"github.com/j75689/archon/internal/fingerprint"
 	"github.com/j75689/archon/internal/git"
@@ -17,35 +19,38 @@ import (
 	"github.com/j75689/archon/internal/lang/golang"
 	"github.com/j75689/archon/internal/llm"
 	"github.com/j75689/archon/internal/log"
+	"github.com/j75689/archon/internal/prompt"
 )
 
 type App struct {
-	Repo    *git.Repo
-	Ext     lang.Extractor
-	From    string
-	To      string
-	Doc     string
-	Anchor  string
-	Model   string
-	BaseURL string
-	APIKey  string
-	LLM     *llm.Client
-	Log     log.Logger
-	Stdout  io.Writer
-	Stderr  io.Writer
+	Repo       *git.Repo
+	Ext        lang.Extractor
+	From       string
+	To         string
+	Doc        string
+	Anchor     string
+	Model      string
+	BaseURL    string
+	APIKey     string
+	LLM        *llm.Client
+	Log        log.Logger
+	Stdout     io.Writer
+	Stderr     io.Writer
+	Generators []config.Generator
 }
 
 func New(repo *git.Repo) *App {
 	return &App{
-		Repo:    repo,
-		Ext:     golang.Extractor{},
-		To:      "HEAD",
-		Doc:     "docs/ARCHITECTURE.md",
-		Anchor:  "data-flow",
-		Model:   "gpt-4o-mini",
-		BaseURL: "https://api.openai.com/v1",
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
+		Repo:       repo,
+		Ext:        golang.Extractor{},
+		To:         "HEAD",
+		Doc:        "docs/ARCHITECTURE.md",
+		Anchor:     "data-flow",
+		Model:      "gpt-4o-mini",
+		BaseURL:    "https://api.openai.com/v1",
+		Stdout:     os.Stdout,
+		Stderr:     os.Stderr,
+		Generators: config.DefaultGenerators,
 	}
 }
 
@@ -222,101 +227,161 @@ func (a *App) Changelog() int {
 
 func (a *App) Sync() int {
 	a.attachLog()
+	if a.From != "" {
+		fmt.Fprintln(a.Stderr, "warning: --from is ignored by sync")
+	}
+
 	to := a.To
 	if to == "" {
 		to = "HEAD"
 	}
 
-	toG, _, code := a.structureAt(to)
+	toG, toAPIs, code := a.structureAt(to)
 	if code != exitcode.OK {
 		return code
 	}
 
-	payload := graph.RenderMermaid(toG)
-	docPath := filepath.Join(a.Repo.Root, filepath.FromSlash(a.Doc))
-
-	body, err := buildSyncedDoc(docPath, a.Anchor, payload)
+	sum, err := fingerprint.Hash(toG, toAPIs)
 	if err != nil {
 		fmt.Fprintln(a.Stderr, err)
 		return exitcode.Fail
 	}
-	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
-		fmt.Fprintln(a.Stderr, err)
-		return exitcode.Fail
-	}
-	if err := os.WriteFile(docPath, body, 0o644); err != nil {
-		fmt.Fprintln(a.Stderr, err)
-		return exitcode.Fail
-	}
-	a.log().Info("write " + a.Doc)
 
-	fr, err := a.Repo.ResolveFrom(to, a.From)
-	if err != nil {
-		if a.From == "" && errors.Is(err, git.ErrNoTag) {
-			fmt.Fprintln(a.Stderr, "warning:", err)
-			return exitcode.OK
-		}
-		fmt.Fprintln(a.Stderr, "warning:", err)
+	lockPath := filepath.Join(a.Repo.Root, ".archon", "graph.json")
+	lf, err := fingerprint.Load(lockPath)
+	if err == nil && lf.Hash == sum {
 		return exitcode.OK
 	}
 
-	if fr.EmptyDiff {
-		a.log().Info("resolve from: empty (same commit)")
-		fmt.Fprint(a.Stdout, graph.FormatReport(graph.Diff{}))
-		return exitcode.OK
-	}
-	a.log().Info("resolve from: " + fr.From)
-
-	fromG, _, code := a.structureAt(fr.From)
-	if code != exitcode.OK {
-		return exitcode.OK
-	}
-
-	d := graph.DiffGraphs(fromG, toG)
-	if d.Empty() {
-		fmt.Fprint(a.Stdout, graph.FormatReport(d))
-		return exitcode.OK
-	}
 	if a.LLM == nil {
 		a.log().Info("llm: skip (no client)")
-		fmt.Fprint(a.Stdout, graph.FormatReport(d))
+		fmt.Fprintln(a.Stderr, "llm: skip (no client)")
 		return exitcode.OK
 	}
 
-	subjects, err := a.Repo.LogSubjects(fr.From, to, 50, 8192)
-	if err != nil {
-		a.log().Info("llm: skip (subjects)")
-		fmt.Fprintln(a.Stderr, "warning:", err)
-		fmt.Fprint(a.Stdout, graph.FormatReport(d))
-		return exitcode.OK
+	prevG := fingerprint.GraphFromLock(lf)
+	diffText := fingerprint.FormatStructure(graph.DiffGraphs(prevG, toG), fingerprint.DiffAPIs(lf.APIs, toAPIs))
+	data := prompt.Data{
+		Graph: formatGraph(toG),
+		APIs:  formatAPIs(toAPIs),
+		Diff:  diffText,
 	}
-	delta, err := a.LLM.Delta(context.Background(), d, subjects)
+
+	gens := a.Generators
+	if len(gens) == 0 {
+		gens = config.DefaultGenerators
+	}
+
+	type pending struct {
+		rel  string
+		dest string
+		body string
+	}
+	var files []pending
+	for _, gen := range gens {
+		tmpl, err := prompt.Load(a.Repo.Root, gen, os.ReadFile)
+		if err != nil {
+			fmt.Fprintln(a.Stderr, err)
+			return exitcode.Fail
+		}
+		user, err := prompt.Render(tmpl, data)
+		if err != nil {
+			fmt.Fprintln(a.Stderr, err)
+			return exitcode.Fail
+		}
+		content, err := a.LLM.Complete(context.Background(), user)
+		if err != nil {
+			a.log().Info("llm: skip (error)")
+			fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
+			return exitcode.OK
+		}
+		files = append(files, pending{
+			rel:  gen.Path,
+			dest: filepath.Join(a.Repo.Root, filepath.FromSlash(gen.Path)),
+			body: ensureTrailingNL(content),
+		})
+	}
+
+	var temps []string
+	cleanup := func() {
+		for _, tmp := range temps {
+			_ = os.Remove(tmp)
+		}
+	}
+	for _, f := range files {
+		if err := os.MkdirAll(filepath.Dir(f.dest), 0o755); err != nil {
+			cleanup()
+			fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
+			return exitcode.OK
+		}
+		tmp := f.dest + ".tmp"
+		if err := os.WriteFile(tmp, []byte(f.body), 0o644); err != nil {
+			cleanup()
+			_ = os.Remove(tmp)
+			fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
+			return exitcode.OK
+		}
+		temps = append(temps, tmp)
+	}
+	for i, f := range files {
+		if err := os.Rename(temps[i], f.dest); err != nil {
+			cleanup()
+			fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
+			return exitcode.OK
+		}
+		temps[i] = ""
+		a.log().Info("write " + f.rel)
+	}
+
+	newLF, err := fingerprint.NewLockfile(toG, toAPIs)
 	if err != nil {
-		a.log().Info("llm: skip (error)")
 		fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
-		fmt.Fprint(a.Stdout, graph.FormatReport(d))
 		return exitcode.OK
 	}
-
-	fmt.Fprintln(a.Stdout, delta)
+	if err := fingerprint.Write(lockPath, newLF); err != nil {
+		fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
+		return exitcode.OK
+	}
 	return exitcode.OK
 }
 
-func buildSyncedDoc(path, anchor, payload string) ([]byte, error) {
-	src, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return doc.NewDocument(payload, anchor), nil
-		}
-		return nil, err
+func formatGraph(g graph.Graph) string {
+	var b strings.Builder
+	for _, n := range g.Nodes {
+		b.WriteString(n.Key)
+		b.WriteByte('\n')
 	}
+	for _, e := range g.Edges {
+		b.WriteString(e.From)
+		b.WriteString(" -> ")
+		b.WriteString(e.To)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
 
-	_, ok, err := doc.ExtractRegion(src, anchor)
-	if err != nil {
-		return nil, err
+func formatAPIs(apis lang.APISet) string {
+	var b strings.Builder
+	for _, api := range apis {
+		b.WriteString(api.Key)
+		b.WriteByte('\n')
+		if api.Doc != "" {
+			b.WriteString(" ")
+			b.WriteString(api.Doc)
+			b.WriteByte('\n')
+		}
+		for _, sig := range api.Signatures {
+			b.WriteString(" - ")
+			b.WriteString(sig)
+			b.WriteByte('\n')
+		}
 	}
-	if !ok {
-		return doc.AppendAnchor(src, anchor, payload), nil
+	return b.String()
+}
+
+func ensureTrailingNL(s string) string {
+	if strings.HasSuffix(s, "\n") {
+		return s
 	}
-	return doc.ReplaceRegion(src, anchor, payload)
+	return s + "\n"
 }

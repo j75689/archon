@@ -42,11 +42,11 @@ func TestRunSyncSucceedsWithoutTagWhileDiffFails(t *testing.T) {
 	if code := run([]string{"sync"}, &syncStdout, &syncStderr); code != exitcode.OK {
 		t.Fatalf("sync code=%d stdout=%q stderr=%q", code, syncStdout.String(), syncStderr.String())
 	}
-	if !strings.Contains(syncStderr.String(), "pass --from") {
+	if !strings.Contains(syncStderr.String(), "llm: skip (no client)") {
 		t.Fatalf("sync stderr = %q", syncStderr.String())
 	}
-	if _, err := os.Stat(filepath.Join(dir, "docs", "ARCHITECTURE.md")); err != nil {
-		t.Fatalf("sync did not create doc: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "docs", "ARCHITECTURE.md")); !os.IsNotExist(err) {
+		t.Fatalf("sync must not write generators without LLM, err=%v", err)
 	}
 
 	var diffStdout, diffStderr bytes.Buffer
@@ -55,26 +55,6 @@ func TestRunSyncSucceedsWithoutTagWhileDiffFails(t *testing.T) {
 	}
 	if !strings.Contains(diffStderr.String(), "pass --from") {
 		t.Fatalf("diff stderr = %q", diffStderr.String())
-	}
-}
-
-func TestRunSyncUsesRepoConfigDocPath(t *testing.T) {
-	dir := initRepo(t)
-	t.Chdir(dir)
-
-	if err := os.WriteFile(filepath.Join(dir, "archon.yaml"), []byte("doc: docs/CUSTOM.md\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	if code := run([]string{"sync"}, &stdout, &stderr); code != exitcode.OK {
-		t.Fatalf("sync code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(dir, "docs", "CUSTOM.md")); err != nil {
-		t.Fatalf("custom doc not created: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "docs", "ARCHITECTURE.md")); !os.IsNotExist(err) {
-		t.Fatalf("default doc path should be unused, err=%v", err)
 	}
 }
 

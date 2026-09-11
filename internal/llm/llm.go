@@ -38,18 +38,24 @@ type chatResponse struct {
 	} `json:"choices"`
 }
 
+const completeSystem = "You write markdown documentation. Reply with the full document only."
+
+const deltaSystem = "You write architecture release notes for engineers. Respond with 100 to 150 words under the heading Architecture Delta:. Use only the provided first-party dependency graph diff and commit subjects. Explain what packages or dependency edges were added or removed, what that suggests about boundaries or data flow, and any likely impact on coupling or maintainability. Be precise, sober, and concrete. If the change is small, say so without padding. Do not mention mermaid, diagrams, source files, filenames, code snippets, tests, or unavailable context. Do not invent behavior, APIs, or implementation details. Base every statement strictly on the supplied report and subjects."
+
+func (c *Client) Complete(ctx context.Context, user string) (string, error) {
+	return c.chat(ctx, completeSystem, user)
+}
+
 func (c *Client) Delta(ctx context.Context, d graph.Diff, subjects []string) (string, error) {
+	return c.chat(ctx, deltaSystem, deltaPrompt(d, subjects))
+}
+
+func (c *Client) chat(ctx context.Context, system, user string) (string, error) {
 	payload := chatRequest{
 		Model: c.Model,
 		Messages: []chatMessage{
-			{
-				Role:    "system",
-				Content: "You write architecture release notes for engineers. Respond with 100 to 150 words under the heading Architecture Delta:. Use only the provided first-party dependency graph diff and commit subjects. Explain what packages or dependency edges were added or removed, what that suggests about boundaries or data flow, and any likely impact on coupling or maintainability. Be precise, sober, and concrete. If the change is small, say so without padding. Do not mention mermaid, diagrams, source files, filenames, code snippets, tests, or unavailable context. Do not invent behavior, APIs, or implementation details. Base every statement strictly on the supplied report and subjects.",
-			},
-			{
-				Role:    "user",
-				Content: deltaPrompt(d, subjects),
-			},
+			{Role: "system", Content: system},
+			{Role: "user", Content: user},
 		},
 	}
 
