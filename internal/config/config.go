@@ -16,22 +16,36 @@ const (
 	defaultBaseURL = "https://api.openai.com/v1"
 )
 
+type Generator struct {
+	ID     string `yaml:"id"`
+	Path   string `yaml:"path"`
+	Prompt string `yaml:"prompt"`
+}
+
+var DefaultGenerators = []Generator{
+	{ID: "architecture", Path: "docs/ARCHITECTURE.md"},
+	{ID: "workflow", Path: "docs/WORKFLOW.md"},
+	{ID: "packages", Path: "docs/PACKAGES.md"},
+}
+
 type Values struct {
-	From    string
-	To      string
-	Doc     string
-	Anchor  string
-	Model   string
-	BaseURL string
-	APIKey  string
-	LLM     bool
+	From       string
+	To         string
+	Doc        string
+	Anchor     string
+	Model      string
+	BaseURL    string
+	APIKey     string
+	LLM        bool
+	Generators []Generator
 }
 
 type fileConfig struct {
-	Doc     string `yaml:"doc"`
-	Anchor  string `yaml:"anchor"`
-	Model   string `yaml:"model"`
-	BaseURL string `yaml:"base_url"`
+	Doc        string      `yaml:"doc"`
+	Anchor     string      `yaml:"anchor"`
+	Model      string      `yaml:"model"`
+	BaseURL    string      `yaml:"base_url"`
+	Generators []Generator `yaml:"generators"`
 }
 
 func Load(repoRoot string, flags Values, getenv func(string) string, readFile func(string) ([]byte, error), home string) (Values, error) {
@@ -62,6 +76,7 @@ func Load(repoRoot string, flags Values, getenv func(string) string, readFile fu
 		BaseURL: firstNonEmpty(flags.BaseURL, envBaseURL, repoCfg.BaseURL, userCfg.BaseURL, defaultBaseURL),
 		APIKey:  firstNonEmpty(flags.APIKey, envAPIKey),
 	}
+	cfg.Generators = firstNonEmptyGenerators(repoCfg.Generators, userCfg.Generators, DefaultGenerators)
 
 	explicitBaseURL := flags.BaseURL != "" || envBaseURL != "" || repoCfg.BaseURL != "" || userCfg.BaseURL != ""
 	cfg.LLM = cfg.APIKey != "" || explicitBaseURL
@@ -92,4 +107,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonEmptyGenerators(lists ...[]Generator) []Generator {
+	for _, generators := range lists {
+		if len(generators) != 0 {
+			return append([]Generator(nil), generators...)
+		}
+	}
+	return nil
 }

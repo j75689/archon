@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -213,6 +214,94 @@ func TestLoadEnablesLLMForAPIKey(t *testing.T) {
 	}
 	if !got.LLM {
 		t.Fatalf("LLM = %v, want true", got.LLM)
+	}
+}
+
+func TestLoadUsesRepoGeneratorsWithoutConcatenatingUserGenerators(t *testing.T) {
+	repoRoot := "/repo"
+	home := "/home/test"
+	want := []Generator{
+		{ID: "architecture", Path: "docs/SYSTEM.md", Prompt: "prompts/system.txt"},
+		{ID: "packages", Path: "docs/MODULES.md"},
+	}
+
+	got, err := Load(
+		repoRoot,
+		Values{Generators: []Generator{
+			{ID: "flag", Path: "docs/FLAG.md"},
+		}},
+		func(string) string { return "" },
+		fakeReadFile(map[string]string{
+			filepath.Join(repoRoot, "archon.yaml"): `generators:
+  - id: architecture
+    path: docs/SYSTEM.md
+    prompt: prompts/system.txt
+  - id: packages
+    path: docs/MODULES.md
+`,
+			filepath.Join(home, ".config/archon/config.yaml"): `generators:
+  - id: workflow
+    path: docs/USER-WORKFLOW.md
+`,
+		}),
+		home,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(got.Generators, want) {
+		t.Fatalf("Generators = %#v, want %#v", got.Generators, want)
+	}
+}
+
+func TestLoadUsesUserGeneratorsWhenRepoListEmpty(t *testing.T) {
+	repoRoot := "/repo"
+	home := "/home/test"
+	want := []Generator{{ID: "workflow", Path: "docs/USER-WORKFLOW.md"}}
+
+	got, err := Load(
+		repoRoot,
+		Values{},
+		func(string) string { return "" },
+		fakeReadFile(map[string]string{
+			filepath.Join(repoRoot, "archon.yaml"): "generators: []\n",
+			filepath.Join(home, ".config/archon/config.yaml"): `generators:
+  - id: workflow
+    path: docs/USER-WORKFLOW.md
+`,
+		}),
+		home,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(got.Generators, want) {
+		t.Fatalf("Generators = %#v, want %#v", got.Generators, want)
+	}
+}
+
+func TestLoadUsesDefaultGeneratorsWhenYAMLListsEmpty(t *testing.T) {
+	got, err := Load(
+		"/repo",
+		Values{},
+		func(string) string { return "" },
+		fakeReadFile(map[string]string{
+			filepath.Join("/repo", "archon.yaml"):                     "generators: []\n",
+			filepath.Join("/home/test", ".config/archon/config.yaml"): "generators: []\n",
+		}),
+		"/home/test",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(got.Generators, DefaultGenerators) {
+		t.Fatalf("Generators = %#v, want %#v", got.Generators, DefaultGenerators)
+	}
+	if len(got.Generators) != 3 {
+		t.Fatalf("len(Generators) = %d, want 3", len(got.Generators))
 	}
 }
 
