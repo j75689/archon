@@ -11,6 +11,10 @@ import (
 	"testing"
 
 	"github.com/j75689/archon/internal/exitcode"
+	"github.com/j75689/archon/internal/fingerprint"
+	"github.com/j75689/archon/internal/git"
+	"github.com/j75689/archon/internal/graph"
+	"github.com/j75689/archon/internal/lang/golang"
 )
 
 func TestRunDiffNoRepo(t *testing.T) {
@@ -105,11 +109,7 @@ func TestRunChangelogContinuesOnLLMError(t *testing.T) {
 func TestRunCheckVerboseAndQuiet(t *testing.T) {
 	dir := initRepo(t)
 	t.Chdir(dir)
-
-	var syncOut, syncErr bytes.Buffer
-	if code := run([]string{"sync"}, &syncOut, &syncErr); code != exitcode.OK {
-		t.Fatalf("sync code=%d stderr=%q", code, syncErr.String())
-	}
+	writeHEADLockfile(t, dir)
 
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"check"}, &stdout, &stderr); code != exitcode.OK {
@@ -132,6 +132,37 @@ func TestRunCheckVerboseAndQuiet(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "snapshot") {
 		t.Fatalf("verbose stderr=%q", stderr.String())
+	}
+}
+
+func writeHEADLockfile(t *testing.T, dir string) {
+	t.Helper()
+	r, err := git.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := r.Snapshot("HEAD", golang.WantFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := (golang.Extractor{}).Extract(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err = graph.Compile(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apis, err := (golang.Extractor{}).ExtractAPIs(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf, err := fingerprint.NewLockfile(g, apis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fingerprint.Write(filepath.Join(dir, ".archon", "graph.json"), lf); err != nil {
+		t.Fatal(err)
 	}
 }
 

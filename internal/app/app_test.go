@@ -15,6 +15,7 @@ import (
 
 	"github.com/j75689/archon/internal/doc"
 	"github.com/j75689/archon/internal/exitcode"
+	"github.com/j75689/archon/internal/fingerprint"
 	"github.com/j75689/archon/internal/git"
 	"github.com/j75689/archon/internal/graph"
 	"github.com/j75689/archon/internal/lang"
@@ -146,99 +147,50 @@ func TestDiffPrivateBodyOnly(t *testing.T) {
 	}
 }
 
-func TestCheckDocPathNotFile(t *testing.T) {
-	dir := initRepo(t)
-
-	docPath := filepath.Join(dir, "docs", "ARCHITECTURE.md")
-	if err := os.MkdirAll(docPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	a, _, errb := newApp(t, dir)
-	if code := a.Check(); code != exitcode.Fail {
-		t.Fatalf("doc is directory: code %d stderr %s", code, errb)
-	}
-	if strings.Contains(errb.String(), "archon sync") {
-		t.Fatalf("expected read error not gate message, got %s", errb)
-	}
-}
-
-func TestCheckMissingAndMatch(t *testing.T) {
+func TestCheckLockfileMatchAndStale(t *testing.T) {
 	dir := initRepo(t)
 
 	a, _, errb := newApp(t, dir)
 	if code := a.Check(); code != exitcode.Gate {
-		t.Fatalf("missing doc code %d %s", code, errb)
-	}
-
-	r, err := git.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snap, err := r.Snapshot("HEAD", golang.WantFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	g, err := graph.Compile(mustExtract(t, snap))
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload := graph.RenderMermaid(g)
-	body := "# Architecture\n\n<!-- ARCHON:START:data-flow -->\n" + payload + "<!-- ARCHON:END:data-flow -->\n"
-	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "docs", "ARCHITECTURE.md"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	a, _, errb = newApp(t, dir)
-	if code := a.Check(); code != exitcode.OK {
-		t.Fatalf("match code %d %s", code, errb)
-	}
-
-	stale := strings.Replace(body, payload, "```mermaid\nflowchart LR\n```\n", 1)
-	if err := os.WriteFile(filepath.Join(dir, "docs", "ARCHITECTURE.md"), []byte(stale), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	a, _, errb = newApp(t, dir)
-	a.From = "HEAD"
-	if code := a.Check(); code != exitcode.Gate {
-		t.Fatalf("stale code %d", code)
+		t.Fatalf("missing lockfile code %d %s", code, errb)
 	}
 	if !strings.Contains(errb.String(), "archon sync") {
 		t.Fatalf("stderr %s", errb)
 	}
+
+	writeHEADLockfile(t, dir)
+
+	a, _, errb = newApp(t, dir)
+	a.From = "HEAD"
+	if code := a.Check(); code != exitcode.OK {
+		t.Fatalf("match code %d %s", code, errb)
+	}
 	if !strings.Contains(errb.String(), "--from is ignored") {
 		t.Fatalf("stderr %s", errb)
+	}
+
+	mustCommitFile(t, dir, "a.go", "package m\nfunc Hello() {}\n", "export")
+	a, _, errb = newApp(t, dir)
+	if code := a.Check(); code != exitcode.Gate {
+		t.Fatalf("stale after export code %d %s", code, errb)
+	}
+}
+
+func TestCheckPrivateBodyDoesNotStale(t *testing.T) {
+	dir := initRepo(t)
+	mustCommitFile(t, dir, "a.go", "package m\nfunc unexported() { println(1) }\n", "b1")
+	writeHEADLockfile(t, dir)
+	mustCommitFile(t, dir, "a.go", "package m\nfunc unexported() { println(2) }\n", "b2")
+
+	a, _, errb := newApp(t, dir)
+	if code := a.Check(); code != exitcode.OK {
+		t.Fatalf("code %d %s", code, errb)
 	}
 }
 
 func TestCheckVerboseMatchAndStale(t *testing.T) {
 	dir := initRepo(t)
-
-	r, err := git.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snap, err := r.Snapshot("HEAD", golang.WantFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	g, err := graph.Compile(mustExtract(t, snap))
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload := graph.RenderMermaid(g)
-	body := "# Architecture\n\n<!-- ARCHON:START:data-flow -->\n" + payload + "<!-- ARCHON:END:data-flow -->\n"
-	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	docPath := filepath.Join(dir, "docs", "ARCHITECTURE.md")
-	if err := os.WriteFile(docPath, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeHEADLockfile(t, dir)
 
 	a, out, errb := newApp(t, dir)
 	a.Log = log.Writer{W: errb, Level: 1}
@@ -253,7 +205,7 @@ func TestCheckVerboseMatchAndStale(t *testing.T) {
 		"snapshot HEAD:",
 		"extract go:",
 		"compile:",
-		"compare docs/ARCHITECTURE.md anchor=data-flow: match",
+		"compare .archon/graph.json: match",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in %q", want, got)
@@ -263,31 +215,25 @@ func TestCheckVerboseMatchAndStale(t *testing.T) {
 		t.Fatalf("level 1 must not include per-file: %q", got)
 	}
 
-	stale := strings.Replace(body, payload, "```mermaid\nflowchart LR\n```\n", 1)
-	if err := os.WriteFile(docPath, []byte(stale), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	mustCommitFile(t, dir, "a.go", "package m\nfunc Hello() {}\n", "export")
 	a, _, errb = newApp(t, dir)
 	a.Log = log.Writer{W: errb, Level: 1}
 	if code := a.Check(); code != exitcode.Gate {
 		t.Fatalf("stale code %d", code)
 	}
-	if !strings.Contains(errb.String(), "compare docs/ARCHITECTURE.md anchor=data-flow: stale") {
+	if !strings.Contains(errb.String(), "compare .archon/graph.json: stale") {
 		t.Fatalf("missing stale compare: %q", errb)
 	}
-	if !strings.Contains(errb.String(), "architecture doc is stale or missing; run archon sync") {
+	if !strings.Contains(errb.String(), "architecture fingerprint is stale or missing; run archon sync") {
 		t.Fatalf("missing gate line: %q", errb)
 	}
 }
 
 func TestCheckVerboseLevel2IncludesSnapshotPath(t *testing.T) {
 	dir := initRepo(t)
-	a, _, errb := newApp(t, dir)
-	if code := a.Sync(); code != exitcode.OK {
-		t.Fatalf("sync %d %s", code, errb)
-	}
+	writeHEADLockfile(t, dir)
 
-	a, _, errb = newApp(t, dir)
+	a, _, errb := newApp(t, dir)
 	a.Log = log.Writer{W: errb, Level: 2}
 	if code := a.Check(); code != exitcode.OK {
 		t.Fatalf("check %d %s", code, errb)
@@ -297,40 +243,51 @@ func TestCheckVerboseLevel2IncludesSnapshotPath(t *testing.T) {
 	}
 }
 
-func TestCheckMissingDocLogsStaleCompare(t *testing.T) {
+func TestCheckMissingLockfileLogsStaleCompare(t *testing.T) {
 	dir := initRepo(t)
 	a, _, errb := newApp(t, dir)
 	a.Log = log.Writer{W: errb, Level: 1}
 	if code := a.Check(); code != exitcode.Gate {
 		t.Fatalf("code %d", code)
 	}
-	if !strings.Contains(errb.String(), "compare docs/ARCHITECTURE.md anchor=data-flow: stale") {
+	if !strings.Contains(errb.String(), "compare .archon/graph.json: stale") {
 		t.Fatalf("stderr %q", errb)
 	}
 }
 
-func TestSyncCreatesDocAndCheckPassesWithoutTag(t *testing.T) {
+func TestCheckPassesWithLockfileWithoutTag(t *testing.T) {
 	dir := initRepo(t)
-
-	a, out, errb := newApp(t, dir)
-	if code := a.Sync(); code != exitcode.OK {
-		t.Fatalf("sync code %d stdout %s stderr %s", code, out, errb)
+	writeHEADLockfile(t, dir)
+	a, _, errb := newApp(t, dir)
+	if code := a.Check(); code != exitcode.OK {
+		t.Fatalf("check code %d stderr %s", code, errb)
 	}
-	if !strings.Contains(errb.String(), "pass --from") {
-		t.Fatalf("stderr %q", errb.String())
-	}
+}
 
-	body, err := os.ReadFile(filepath.Join(dir, "docs", "ARCHITECTURE.md"))
+func writeHEADLockfile(t *testing.T, dir string) {
+	t.Helper()
+	r, err := git.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(body), "\r") {
-		t.Fatalf("doc must use LF, got %q", string(body))
+	snap, err := r.Snapshot("HEAD", golang.WantFile)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	a, _, errb = newApp(t, dir)
-	if code := a.Check(); code != exitcode.OK {
-		t.Fatalf("check code %d stderr %s", code, errb)
+	g, err := graph.Compile(mustExtract(t, snap))
+	if err != nil {
+		t.Fatal(err)
+	}
+	apis, err := (golang.Extractor{}).ExtractAPIs(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf, err := fingerprint.NewLockfile(g, apis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fingerprint.Write(filepath.Join(dir, ".archon", "graph.json"), lf); err != nil {
+		t.Fatal(err)
 	}
 }
 

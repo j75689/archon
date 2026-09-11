@@ -11,6 +11,7 @@ import (
 
 	"github.com/j75689/archon/internal/doc"
 	"github.com/j75689/archon/internal/exitcode"
+	"github.com/j75689/archon/internal/fingerprint"
 	"github.com/j75689/archon/internal/git"
 	"github.com/j75689/archon/internal/graph"
 	"github.com/j75689/archon/internal/lang"
@@ -70,29 +71,34 @@ func (a *App) log() log.Logger {
 	return log.OrNop(a.Log)
 }
 
-func (a *App) graphAt(rev string) (graph.Graph, int) {
+func (a *App) structureAt(rev string) (graph.Graph, lang.APISet, int) {
 	snap, err := a.Repo.Snapshot(rev, golang.WantFile)
 	if err != nil {
 		fmt.Fprintln(a.Stderr, err)
-		return graph.Graph{}, exitcode.Fail
+		return graph.Graph{}, nil, exitcode.Fail
 	}
 	if !a.Ext.Match(snap) {
 		fmt.Fprintln(a.Stderr, "no supported language (need go.mod at repository root)")
-		return graph.Graph{}, exitcode.Fail
+		return graph.Graph{}, nil, exitcode.Fail
 	}
 	g, err := a.Ext.Extract(snap)
 	if err != nil {
 		fmt.Fprintln(a.Stderr, err)
-		return graph.Graph{}, exitcode.Fail
+		return graph.Graph{}, nil, exitcode.Fail
 	}
 	a.log().Info(fmt.Sprintf("extract go: %d packages, %d edges", len(g.Nodes), len(g.Edges)))
 	g, err = graph.Compile(g)
 	if err != nil {
 		fmt.Fprintln(a.Stderr, err)
-		return graph.Graph{}, exitcode.Fail
+		return graph.Graph{}, nil, exitcode.Fail
 	}
 	a.log().Info(fmt.Sprintf("compile: %d nodes, %d edges", len(g.Nodes), len(g.Edges)))
-	return g, exitcode.OK
+	apis, err := a.Ext.ExtractAPIs(snap)
+	if err != nil {
+		fmt.Fprintln(a.Stderr, err)
+		return graph.Graph{}, nil, exitcode.Fail
+	}
+	return g, apis, exitcode.OK
 }
 
 func (a *App) Check() int {
@@ -106,37 +112,28 @@ func (a *App) Check() int {
 		to = "HEAD"
 	}
 
-	g, code := a.graphAt(to)
+	g, apis, code := a.structureAt(to)
 	if code != exitcode.OK {
 		return code
 	}
 
-	src, err := os.ReadFile(filepath.Join(a.Repo.Root, filepath.FromSlash(a.Doc)))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			a.log().Info(fmt.Sprintf("compare %s anchor=%s: stale", a.Doc, a.Anchor))
-			fmt.Fprintln(a.Stderr, "architecture doc is stale or missing; run archon sync")
-			return exitcode.Gate
-		}
-		fmt.Fprintln(a.Stderr, err)
-		return exitcode.Fail
-	}
-
-	region, ok, err := doc.ExtractRegion(src, a.Anchor)
+	sum, err := fingerprint.Hash(g, apis)
 	if err != nil {
 		fmt.Fprintln(a.Stderr, err)
 		return exitcode.Fail
 	}
-
-	want := strings.TrimSpace(doc.NormalizeNL(graph.RenderMermaid(g)))
-	got := strings.TrimSpace(doc.NormalizeNL(region))
-	if !ok || got != want {
-		a.log().Info(fmt.Sprintf("compare %s anchor=%s: stale", a.Doc, a.Anchor))
-		fmt.Fprintln(a.Stderr, "architecture doc is stale or missing; run archon sync")
+	lf, err := fingerprint.Load(filepath.Join(a.Repo.Root, ".archon", "graph.json"))
+	if err != nil {
+		a.log().Info("compare .archon/graph.json: stale")
+		fmt.Fprintln(a.Stderr, "architecture fingerprint is stale or missing; run archon sync")
 		return exitcode.Gate
 	}
-
-	a.log().Info(fmt.Sprintf("compare %s anchor=%s: match", a.Doc, a.Anchor))
+	if lf.Hash != sum {
+		a.log().Info("compare .archon/graph.json: stale")
+		fmt.Fprintln(a.Stderr, "architecture fingerprint is stale or missing; run archon sync")
+		return exitcode.Gate
+	}
+	a.log().Info("compare .archon/graph.json: match")
 	return exitcode.OK
 }
 
@@ -164,11 +161,11 @@ func (a *App) Diff() int {
 	}
 	a.log().Info("resolve from: " + fr.From)
 
-	fromG, code := a.graphAt(fr.From)
+	fromG, _, code := a.structureAt(fr.From)
 	if code != exitcode.OK {
 		return code
 	}
-	toG, code := a.graphAt(to)
+	toG, _, code := a.structureAt(to)
 	if code != exitcode.OK {
 		return code
 	}
@@ -205,11 +202,11 @@ func (a *App) Changelog() int {
 	}
 	a.log().Info("resolve from: " + fr.From)
 
-	fromG, code := a.graphAt(fr.From)
+	fromG, _, code := a.structureAt(fr.From)
 	if code != exitcode.OK {
 		return code
 	}
-	toG, code := a.graphAt(to)
+	toG, _, code := a.structureAt(to)
 	if code != exitcode.OK {
 		return code
 	}
@@ -251,7 +248,7 @@ func (a *App) Sync() int {
 		to = "HEAD"
 	}
 
-	toG, code := a.graphAt(to)
+	toG, _, code := a.structureAt(to)
 	if code != exitcode.OK {
 		return code
 	}
@@ -291,7 +288,7 @@ func (a *App) Sync() int {
 	}
 	a.log().Info("resolve from: " + fr.From)
 
-	fromG, code := a.graphAt(fr.From)
+	fromG, _, code := a.structureAt(fr.From)
 	if code != exitcode.OK {
 		return exitcode.OK
 	}
