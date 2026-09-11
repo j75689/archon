@@ -1,6 +1,7 @@
 package fingerprint
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,6 +20,18 @@ func sample() (graph.Graph, lang.APISet) {
 		{Key: "m", Doc: "root", Signatures: []string{"func Hello()"}},
 	}
 	return g, apis
+}
+
+func TestCanonicalJSONIncludesEmptyDoc(t *testing.T) {
+	g := graph.Graph{}
+	apis := lang.APISet{{Key: "m/pkg", Doc: "", Signatures: []string{"func F()"}}}
+	b, err := Canonical(g, apis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte(`"doc":""`)) {
+		t.Fatalf("canonical JSON missing empty doc field: %s", b)
+	}
 }
 
 func TestHashStableAndIgnoresMermaidID(t *testing.T) {

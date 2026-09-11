@@ -29,7 +29,7 @@ type canonGraph struct {
 
 type canonAPI struct {
 	Key        string   `json:"key"`
-	Doc        string   `json:"doc,omitempty"`
+	Doc        string   `json:"doc"`
 	Signatures []string `json:"signatures"`
 }
 
