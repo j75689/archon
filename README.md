@@ -87,3 +87,7 @@ The LLM is used only when a key is set **or** `base_url` / `ARCHON_BASE_URL` is 
 make help
 make all    # fmt-check, vet, test, build, archon check
 ```
+
+## License
+
+[MIT](LICENSE)
