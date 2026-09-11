@@ -69,7 +69,7 @@ generators:
     prompt: prompts/packages.md
 ```
 
-If `generators` is omitted or empty, those three default paths are used with built-in prompts. `prompt:` is a path relative to the repo root; a missing file is an error. Built-in prompts apply only when `prompt` is empty on a default generator.
+If `generators` is omitted or empty, those three default paths are used with built-in prompts. `prompt:` is a path relative to the repo root; a missing file is an error. Built-in prompts apply only when `prompt` is empty on `architecture`, `workflow`, or `packages`. Any other `id` with no `prompt` is skipped (`generator <id>: skip (no prompt)`) and does not fail `sync`.
 
 | Env | Meaning |
 |---|---|
