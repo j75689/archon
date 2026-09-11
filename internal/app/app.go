@@ -308,6 +308,10 @@ func (a *App) Sync() int {
 		})
 	}
 
+	if len(files) == 0 {
+		return exitcode.OK
+	}
+
 	var temps []string
 	cleanup := func() {
 		for _, tmp := range temps {

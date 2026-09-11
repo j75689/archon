@@ -511,6 +511,42 @@ func TestSyncCustomPromptMissingFileFails(t *testing.T) {
 	}
 }
 
+func TestSyncAllCustomGeneratorsWithoutPromptSkipLockfile(t *testing.T) {
+	dir := initRepo(t)
+	var n int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&n, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"# doc\n"}}]}`))
+	}))
+	defer srv.Close()
+
+	a, _, errb := newApp(t, dir)
+	a.Generators = []config.Generator{
+		{ID: "adr", Path: "docs/ADR.md"},
+		{ID: "notes", Path: "docs/NOTES.md"},
+	}
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "t", HTTP: srv.Client()}
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("code %d stderr %s", code, errb)
+	}
+	if got := atomic.LoadInt32(&n); got != 0 {
+		t.Fatalf("LLM requests %d, want 0", got)
+	}
+	if !strings.Contains(errb.String(), "generator adr: skip (no prompt)") {
+		t.Fatalf("stderr %q", errb)
+	}
+	if !strings.Contains(errb.String(), "generator notes: skip (no prompt)") {
+		t.Fatalf("stderr %q", errb)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs", "ADR.md")); !os.IsNotExist(err) {
+		t.Fatalf("ADR.md written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".archon", "graph.json")); !os.IsNotExist(err) {
+		t.Fatalf("lockfile written: %v", err)
+	}
+}
+
 func TestChangelogPrintsReportWithoutLLM(t *testing.T) {
 	dir := initRepo(t)
 	runGit(t, dir, "tag", "v1.0.0")
