@@ -433,6 +433,84 @@ func TestSyncUserPromptAppearsInRequest(t *testing.T) {
 	}
 }
 
+func TestSyncSkipsCustomGeneratorWithoutPrompt(t *testing.T) {
+	dir := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "adr.md"), []byte("ADR_PROMPT\n{{.Graph}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var n int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&n, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"# doc\n"}}]}`))
+	}))
+	defer srv.Close()
+
+	a, _, errb := newApp(t, dir)
+	a.Generators = []config.Generator{
+		{ID: "architecture", Path: "docs/ARCHITECTURE.md"},
+		{ID: "adr", Path: "docs/ADR.md", Prompt: "prompts/adr.md"},
+		{ID: "notes", Path: "docs/NOTES.md"},
+	}
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "t", HTTP: srv.Client()}
+	if code := a.Sync(); code != exitcode.OK {
+		t.Fatalf("code %d stderr %s", code, errb)
+	}
+	if got := atomic.LoadInt32(&n); got != 2 {
+		t.Fatalf("LLM requests %d, want 2", got)
+	}
+	for _, p := range []string{"docs/ARCHITECTURE.md", "docs/ADR.md"} {
+		b, err := os.ReadFile(filepath.Join(dir, p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != "# doc\n" {
+			t.Fatalf("%s %q", p, b)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs", "NOTES.md")); !os.IsNotExist(err) {
+		t.Fatalf("NOTES.md written: %v", err)
+	}
+	if !strings.Contains(errb.String(), "generator notes: skip (no prompt)") {
+		t.Fatalf("stderr %q", errb)
+	}
+	if strings.Contains(errb.String(), "generator architecture: skip") || strings.Contains(errb.String(), "generator adr: skip") {
+		t.Fatalf("skipped a runnable generator: %q", errb)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".archon", "graph.json")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncCustomPromptMissingFileFails(t *testing.T) {
+	dir := initRepo(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("LLM must not be called")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"# doc\n"}}]}`))
+	}))
+	defer srv.Close()
+
+	a, _, errb := newApp(t, dir)
+	a.Generators = []config.Generator{
+		{ID: "adr", Path: "docs/ADR.md", Prompt: "prompts/missing.md"},
+	}
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "t", HTTP: srv.Client()}
+	if code := a.Sync(); code != exitcode.Fail {
+		t.Fatalf("code %d stderr %s", code, errb)
+	}
+	if !strings.Contains(errb.String(), "read prompt") {
+		t.Fatalf("stderr %q", errb)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".archon", "graph.json")); !os.IsNotExist(err) {
+		t.Fatalf("lockfile written: %v", err)
+	}
+}
+
 func TestChangelogPrintsReportWithoutLLM(t *testing.T) {
 	dir := initRepo(t)
 	runGit(t, dir, "tag", "v1.0.0")

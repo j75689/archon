@@ -279,6 +279,12 @@ func (a *App) Sync() int {
 	}
 	var files []pending
 	for _, gen := range gens {
+		if !generatorRunnable(gen) {
+			msg := fmt.Sprintf("generator %s: skip (no prompt)", gen.ID)
+			a.log().Info(msg)
+			fmt.Fprintln(a.Stderr, msg)
+			continue
+		}
 		tmpl, err := prompt.Load(a.Repo.Root, gen, os.ReadFile)
 		if err != nil {
 			fmt.Fprintln(a.Stderr, err)
@@ -384,4 +390,12 @@ func ensureTrailingNL(s string) string {
 		return s
 	}
 	return s + "\n"
+}
+
+func generatorRunnable(gen config.Generator) bool {
+	if gen.Prompt != "" {
+		return true
+	}
+	_, ok := prompt.BuiltIn(gen.ID)
+	return ok
 }

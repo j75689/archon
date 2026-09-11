@@ -90,3 +90,16 @@ func TestBuiltInSupportsConfiguredGeneratorIDs(t *testing.T) {
 		t.Fatal(`BuiltIn("unknown") found, want missing`)
 	}
 }
+
+func TestLoadUnknownGeneratorIDWithoutPromptReturnsError(t *testing.T) {
+	_, err := Load("/repo", config.Generator{ID: "adr"}, func(string) ([]byte, error) {
+		t.Fatal("readFile must not be called")
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), `no built-in prompt for generator "adr"`) {
+		t.Fatalf("error %v", err)
+	}
+}
