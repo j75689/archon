@@ -32,10 +32,10 @@ fmt-check: ## fail if gofmt would change files
 tidy: ## sync go.mod and go.sum
 	go mod tidy
 
-check: build ## fail if docs/ARCHITECTURE.md is stale
+check: build ## fail if .archon/graph.json is stale
 	$(BIN) check
 
-sync: build ## rewrite the architecture diagram from the import graph
+sync: build ## write LLM docs when the fingerprint is stale
 	$(BIN) sync
 
 install: ## install archon into GOPATH/bin or GOBIN
