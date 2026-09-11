@@ -15,6 +15,18 @@ import (
 	"github.com/j75689/archon/internal/lang/golang"
 )
 
+func TestRunHelpListsTimeoutFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--help"}, &stdout, &stderr)
+	if code != exitcode.OK {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	help := stdout.String() + stderr.String()
+	if !strings.Contains(help, "--timeout") {
+		t.Fatalf("help missing --timeout: %q", help)
+	}
+}
+
 func TestRunDiffNoRepo(t *testing.T) {
 	gitOK(t)
 

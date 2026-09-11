@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/j75689/archon/internal/graph"
 	"github.com/j75689/archon/internal/log"
@@ -309,5 +310,21 @@ func TestCompleteHTTPErrorLogsPostNotDone(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "llm: done") {
 		t.Fatalf("must not log done on error: %q", buf.String())
+	}
+}
+
+func TestHTTPClientDefaultTimeout(t *testing.T) {
+	c := &Client{}
+	got := c.httpClient().Timeout
+	if got != 60*time.Second {
+		t.Fatalf("default timeout = %v, want 60s", got)
+	}
+}
+
+func TestHTTPClientUsesConfiguredTimeout(t *testing.T) {
+	c := &Client{Timeout: 5 * time.Minute}
+	got := c.httpClient().Timeout
+	if got != 5*time.Minute {
+		t.Fatalf("timeout = %v, want 5m", got)
 	}
 }

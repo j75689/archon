@@ -20,6 +20,7 @@ type Client struct {
 	APIKey  string
 	HTTP    *http.Client
 	Log     log.Logger
+	Timeout time.Duration
 }
 
 type chatRequest struct {
@@ -129,7 +130,11 @@ func (c *Client) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	return &http.Client{Timeout: timeout}
 }
 
 func deltaPrompt(d graph.Diff, subjects []string) string {

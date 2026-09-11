@@ -1,2 +1,13 @@
-doc: docs/ARCHITECTURE.md
-anchor: data-flow
+# archon.yaml
+model: gpt-4o-mini
+base_url: https://api.openai.com/v1
+generators:
+  - id: architecture
+    path: docs/ARCHITECTURE.md
+    #prompt: prompts/architecture.md
+  - id: workflow
+    path: docs/WORKFLOW.md
+    #prompt: prompts/workflow.md
+  - id: packages
+    path: docs/PACKAGES.md
+    #prompt: prompts/packages.md

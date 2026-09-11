@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/j75689/archon/internal/app"
 	"github.com/j75689/archon/internal/config"
@@ -40,6 +41,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 	var to string
 	var doc string
 	var verbose int
+	var timeout time.Duration
 
 	root := &cobra.Command{
 		Use:           "archon",
@@ -52,6 +54,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().StringVar(&from, "from", "", "git revision for the left side of a drift comparison")
 	root.PersistentFlags().StringVar(&to, "to", "HEAD", "git revision to inspect")
 	root.PersistentFlags().StringVar(&doc, "doc", "", "architecture markdown path relative to repo root")
+	root.PersistentFlags().DurationVar(&timeout, "timeout", 60*time.Second, "LLM HTTP timeout")
 	root.PersistentFlags().CountVarP(&verbose, "verbose", "v", "progress on stderr; repeat for per-file (-vv)")
 
 	newApp := func() (*app.App, error) {
@@ -94,6 +97,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 				BaseURL: cfg.BaseURL,
 				Model:   cfg.Model,
 				APIKey:  cfg.APIKey,
+				Timeout: timeout,
 			}
 		}
 		return a, nil
