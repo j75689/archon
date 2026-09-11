@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/j75689/archon/internal/graph"
 	"github.com/j75689/archon/internal/lang"
@@ -42,6 +43,88 @@ type Lockfile struct {
 	Hash  string      `json:"hash"`
 	Graph canonGraph  `json:"graph"`
 	APIs  lang.APISet `json:"apis"`
+}
+
+type APIEntry struct {
+	Key       string
+	Signature string
+}
+
+type APIDiff struct {
+	Added   []APIEntry
+	Removed []APIEntry
+}
+
+func (d APIDiff) Empty() bool {
+	return len(d.Added) == 0 && len(d.Removed) == 0
+}
+
+func DiffAPIs(from, to lang.APISet) APIDiff {
+	flatten := func(apis lang.APISet) map[string]APIEntry {
+		entries := make(map[string]APIEntry)
+		for _, api := range apis {
+			for _, signature := range api.Signatures {
+				entries[api.Key+"\x00"+signature] = APIEntry{
+					Key:       api.Key,
+					Signature: signature,
+				}
+			}
+		}
+		return entries
+	}
+
+	fromEntries := flatten(from)
+	toEntries := flatten(to)
+	var diff APIDiff
+	for identity, entry := range toEntries {
+		if _, ok := fromEntries[identity]; !ok {
+			diff.Added = append(diff.Added, entry)
+		}
+	}
+	for identity, entry := range fromEntries {
+		if _, ok := toEntries[identity]; !ok {
+			diff.Removed = append(diff.Removed, entry)
+		}
+	}
+	sortEntries := func(entries []APIEntry) {
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].Key != entries[j].Key {
+				return entries[i].Key < entries[j].Key
+			}
+			return entries[i].Signature < entries[j].Signature
+		})
+	}
+	sortEntries(diff.Added)
+	sortEntries(diff.Removed)
+	return diff
+}
+
+func FormatStructure(graphDiff graph.Diff, apiDiff APIDiff) string {
+	if graphDiff.Empty() && apiDiff.Empty() {
+		return "No first-party structure changes.\n"
+	}
+
+	var b strings.Builder
+	if !graphDiff.Empty() {
+		b.WriteString(graph.FormatReport(graphDiff))
+	}
+	writeEntries := func(title string, entries []APIEntry) {
+		if len(entries) == 0 {
+			return
+		}
+		b.WriteString(title)
+		b.WriteByte('\n')
+		for _, entry := range entries {
+			b.WriteString("- ")
+			b.WriteString(entry.Key)
+			b.WriteString(": ")
+			b.WriteString(entry.Signature)
+			b.WriteByte('\n')
+		}
+	}
+	writeEntries("added signatures:", apiDiff.Added)
+	writeEntries("removed signatures:", apiDiff.Removed)
+	return b.String()
 }
 
 func canonicalGraph(g graph.Graph) canonGraph {

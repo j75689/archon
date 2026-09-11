@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/j75689/archon/internal/graph"
@@ -80,5 +81,22 @@ func TestLockfileRoundTrip(t *testing.T) {
 	}
 	if _, err := Load(filepath.Join(dir, "missing.json")); !os.IsNotExist(err) {
 		t.Fatalf("missing: %v", err)
+	}
+}
+
+func TestDiffAPIsAndFormatStructure(t *testing.T) {
+	from := lang.APISet{{Key: "m", Signatures: []string{"func A()"}}}
+	to := lang.APISet{{Key: "m", Signatures: []string{"func A()", "func B()"}}}
+
+	d := DiffAPIs(from, to)
+	if d.Empty() || len(d.Added) != 1 {
+		t.Fatalf("%+v", d)
+	}
+	rep := FormatStructure(graph.Diff{}, d)
+	if !strings.Contains(rep, "m: func B()") {
+		t.Fatalf("report %q", rep)
+	}
+	if FormatStructure(graph.Diff{}, APIDiff{}) != "No first-party structure changes.\n" {
+		t.Fatal("empty")
 	}
 }

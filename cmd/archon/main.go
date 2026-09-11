@@ -113,7 +113,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 
 	root.AddCommand(&cobra.Command{
 		Use:   "diff",
-		Short: "Fail if the first-party graph changed between --from and --to",
+		Short: "Fail if first-party structure changed between --from and --to",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := newApp()
@@ -139,7 +139,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 
 	root.AddCommand(&cobra.Command{
 		Use:   "changelog",
-		Short: "Print a graph diff and optional architecture delta",
+		Short: "Print first-party structure changes",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := newApp()

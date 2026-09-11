@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,28 +78,21 @@ func TestRunSyncUsesRepoConfigDocPath(t *testing.T) {
 	}
 }
 
-func TestRunChangelogContinuesOnLLMError(t *testing.T) {
+func TestRunChangelogReportsWithoutLLM(t *testing.T) {
 	dir := initRepo(t)
 	t.Chdir(dir)
 	runGit(t, dir, "tag", "v1.0.0")
 	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	t.Setenv("ARCHON_BASE_URL", srv.URL)
-
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"changelog"}, &stdout, &stderr)
-	if code != exitcode.OK {
+	if code != exitcode.Gate {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "added nodes:") {
 		t.Fatalf("stdout=%q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "llm") {
+	if strings.Contains(stderr.String(), "llm") {
 		t.Fatalf("stderr=%q", stderr.String())
 	}
 }

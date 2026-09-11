@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/j75689/archon/internal/doc"
 	"github.com/j75689/archon/internal/exitcode"
@@ -156,23 +155,24 @@ func (a *App) Diff() int {
 
 	if fr.EmptyDiff {
 		a.log().Info("resolve from: empty (same commit)")
-		fmt.Fprint(a.Stdout, graph.FormatReport(graph.Diff{}))
+		fmt.Fprint(a.Stdout, fingerprint.FormatStructure(graph.Diff{}, fingerprint.APIDiff{}))
 		return exitcode.OK
 	}
 	a.log().Info("resolve from: " + fr.From)
 
-	fromG, _, code := a.structureAt(fr.From)
+	fromG, fromAPIs, code := a.structureAt(fr.From)
 	if code != exitcode.OK {
 		return code
 	}
-	toG, _, code := a.structureAt(to)
+	toG, toAPIs, code := a.structureAt(to)
 	if code != exitcode.OK {
 		return code
 	}
 
 	d := graph.DiffGraphs(fromG, toG)
-	fmt.Fprint(a.Stdout, graph.FormatReport(d))
-	if d.Empty() {
+	ad := fingerprint.DiffAPIs(fromAPIs, toAPIs)
+	fmt.Fprint(a.Stdout, fingerprint.FormatStructure(d, ad))
+	if d.Empty() && ad.Empty() {
 		return exitcode.OK
 	}
 	return exitcode.Gate
@@ -197,48 +197,27 @@ func (a *App) Changelog() int {
 
 	if fr.EmptyDiff {
 		a.log().Info("resolve from: empty (same commit)")
-		fmt.Fprint(a.Stdout, graph.FormatReport(graph.Diff{}))
+		fmt.Fprint(a.Stdout, fingerprint.FormatStructure(graph.Diff{}, fingerprint.APIDiff{}))
 		return exitcode.OK
 	}
 	a.log().Info("resolve from: " + fr.From)
 
-	fromG, _, code := a.structureAt(fr.From)
+	fromG, fromAPIs, code := a.structureAt(fr.From)
 	if code != exitcode.OK {
 		return code
 	}
-	toG, _, code := a.structureAt(to)
+	toG, toAPIs, code := a.structureAt(to)
 	if code != exitcode.OK {
 		return code
 	}
 
 	d := graph.DiffGraphs(fromG, toG)
-	fmt.Fprint(a.Stdout, graph.FormatReport(d))
-	if d.Empty() {
+	ad := fingerprint.DiffAPIs(fromAPIs, toAPIs)
+	fmt.Fprint(a.Stdout, fingerprint.FormatStructure(d, ad))
+	if d.Empty() && ad.Empty() {
 		return exitcode.OK
 	}
-	if a.LLM == nil {
-		a.log().Info("llm: skip (no client)")
-		return exitcode.OK
-	}
-
-	subjects, err := a.Repo.LogSubjects(fr.From, to, 50, 8192)
-	if err != nil {
-		a.log().Info("llm: skip (subjects)")
-		fmt.Fprintln(a.Stderr, "warning:", err)
-		return exitcode.OK
-	}
-	delta, err := a.LLM.Delta(context.Background(), d, subjects)
-	if err != nil {
-		a.log().Info("llm: skip (error)")
-		fmt.Fprintln(a.Stderr, llm.FormatDeltaError(err))
-		return exitcode.OK
-	}
-
-	if !strings.HasSuffix(graph.FormatReport(d), "\n\n") {
-		fmt.Fprintln(a.Stdout)
-	}
-	fmt.Fprintln(a.Stdout, delta)
-	return exitcode.OK
+	return exitcode.Gate
 }
 
 func (a *App) Sync() int {

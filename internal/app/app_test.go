@@ -142,8 +142,28 @@ func TestDiffPrivateBodyOnly(t *testing.T) {
 	if code := a.Diff(); code != exitcode.OK {
 		t.Fatalf("code %d out %s", code, out)
 	}
-	if out.String() != "No first-party dependency changes.\n" {
+	if out.String() != "No first-party structure changes.\n" {
 		t.Fatalf("out %q", out.String())
+	}
+}
+
+func TestDiffExportedSignatureChange(t *testing.T) {
+	dir := initRepo(t)
+	mustCommitFile(t, dir, "a.go", "package m\nfunc Hello() {}\n", "export")
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "a.go", "package m\nfunc Hello(name string) {}\n", "change signature")
+
+	a, out, _ := newApp(t, dir)
+	if code := a.Diff(); code != exitcode.Gate {
+		t.Fatalf("code %d out %s", code, out)
+	}
+	for _, want := range []string{
+		"added signatures:\n- example.com/m: func Hello(name string)",
+		"removed signatures:\n- example.com/m: func Hello()",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in %q", want, out.String())
+		}
 	}
 }
 
@@ -344,8 +364,16 @@ func TestChangelogPrintsReportWithoutLLM(t *testing.T) {
 	runGit(t, dir, "tag", "v1.0.0")
 	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
 
+	var requests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		http.Error(w, "should not happen", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
 	a, out, errb := newApp(t, dir)
-	if code := a.Changelog(); code != exitcode.OK {
+	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
+	if code := a.Changelog(); code != exitcode.Gate {
 		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
 	}
 	if !strings.Contains(out.String(), "added nodes:") {
@@ -353,6 +381,9 @@ func TestChangelogPrintsReportWithoutLLM(t *testing.T) {
 	}
 	if strings.Contains(errb.String(), "llm") {
 		t.Fatalf("stderr %q", errb.String())
+	}
+	if got := atomic.LoadInt32(&requests); got != 0 {
+		t.Fatalf("requests = %d", got)
 	}
 }
 
@@ -375,7 +406,7 @@ func TestChangelogSkipsLLMForPrivateOnlyChange(t *testing.T) {
 	if code := a.Changelog(); code != exitcode.OK {
 		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
 	}
-	if out.String() != "No first-party dependency changes.\n" {
+	if out.String() != "No first-party structure changes.\n" {
 		t.Fatalf("stdout %q", out.String())
 	}
 	if got := atomic.LoadInt32(&requests); got != 0 {
@@ -394,84 +425,6 @@ func assertOneStderrLine(t *testing.T, stderr string) {
 	inner := strings.TrimSuffix(stderr, "\n")
 	if strings.Contains(inner, "\n") {
 		t.Fatalf("stderr must be one line, got %q", stderr)
-	}
-}
-
-func TestChangelogOneStderrLineOnLLM500MultiLineBody(t *testing.T) {
-	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
-
-	body := "<html>\n<title>error</title>\n<body>fail</body>\n</html>\n"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(body))
-	}))
-	defer srv.Close()
-
-	a, out, errb := newApp(t, dir)
-	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
-	if code := a.Changelog(); code != exitcode.OK {
-		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
-	}
-	if !strings.Contains(out.String(), "added nodes:") {
-		t.Fatalf("stdout %q", out.String())
-	}
-	assertOneStderrLine(t, errb.String())
-	if !strings.Contains(errb.String(), "llm delta:") {
-		t.Fatalf("stderr %q", errb.String())
-	}
-	if !strings.Contains(errb.String(), "<html> <title>error</title>") {
-		t.Fatalf("stderr must contain compact error body: %q", errb.String())
-	}
-}
-
-func TestChangelogOneStderrLineOnEmptyLLMBody(t *testing.T) {
-	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	a, out, errb := newApp(t, dir)
-	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
-	if code := a.Changelog(); code != exitcode.OK {
-		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
-	}
-	if !strings.Contains(out.String(), "added nodes:") {
-		t.Fatalf("stdout %q", out.String())
-	}
-	assertOneStderrLine(t, errb.String())
-	if !strings.Contains(errb.String(), "empty response body") {
-		t.Fatalf("stderr %q", errb.String())
-	}
-}
-
-func TestChangelogOneStderrLineOnEmptyAssistantContent(t *testing.T) {
-	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":""}}]}`))
-	}))
-	defer srv.Close()
-
-	a, out, errb := newApp(t, dir)
-	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
-	if code := a.Changelog(); code != exitcode.OK {
-		t.Fatalf("code %d stdout %s stderr %s", code, out, errb)
-	}
-	if !strings.Contains(out.String(), "added nodes:") {
-		t.Fatalf("stdout %q", out.String())
-	}
-	assertOneStderrLine(t, errb.String())
-	if !strings.Contains(errb.String(), "missing content") {
-		t.Fatalf("stderr %q", errb.String())
 	}
 }
 
@@ -632,48 +585,6 @@ func TestSyncWarnsAndPrintsReportWhenLogSubjectsFails(t *testing.T) {
 	}
 }
 
-func TestChangelogWarnsAndPrintsReportWhenLogSubjectsFails(t *testing.T) {
-	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
-
-	r, err := git.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, out, errb := newApp(t, dir)
-	a.Repo = r
-	a.LLM = &llm.Client{BaseURL: "http://127.0.0.1:1", Model: "gpt-test"}
-	a.Ext = &seqExtractor{
-		match: true,
-		extracts: []func(lang.Snapshot) (graph.Graph, error){
-			func(lang.Snapshot) (graph.Graph, error) {
-				return graph.Graph{Nodes: []graph.Node{{Key: "example.com/m", Label: "."}}}, nil
-			},
-			func(lang.Snapshot) (graph.Graph, error) {
-				a.Repo.Bin = filepath.Join(dir, "missing-git")
-				return graph.Graph{
-					Nodes: []graph.Node{
-						{Key: "example.com/m", Label: "."},
-						{Key: "example.com/m/b", Label: "b"},
-					},
-					Edges: []graph.Edge{{From: "example.com/m", To: "example.com/m/b"}},
-				}, nil
-			},
-		},
-	}
-
-	if code := a.Changelog(); code != exitcode.OK {
-		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errb.String())
-	}
-	if !strings.Contains(errb.String(), "git") {
-		t.Fatalf("stderr %q", errb.String())
-	}
-	if !strings.Contains(out.String(), "added nodes:") {
-		t.Fatalf("stdout %q", out.String())
-	}
-}
-
 func TestDiffVerboseResolveFromAndEmpty(t *testing.T) {
 	dir := initRepo(t)
 	runGit(t, dir, "tag", "v1.0.0")
@@ -715,105 +626,6 @@ func TestSyncVerboseWriteAndSkipNoClient(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "added nodes:") {
 		t.Fatalf("stdout %q", out)
-	}
-}
-
-func TestChangelogVerboseSkipNoClientAndNoLLMOnEmptyDiff(t *testing.T) {
-	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "b")
-
-	a, _, errb := newApp(t, dir)
-	a.Log = log.Writer{W: errb, Level: 1}
-	if code := a.Changelog(); code != exitcode.OK {
-		t.Fatalf("code %d %s", code, errb)
-	}
-	if !strings.Contains(errb.String(), "llm: skip (no client)") {
-		t.Fatalf("stderr %q", errb)
-	}
-
-	dir = initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	a, _, errb = newApp(t, dir)
-	a.Log = log.Writer{W: errb, Level: 1}
-	if code := a.Changelog(); code != exitcode.OK {
-		t.Fatalf("empty code %d %s", code, errb)
-	}
-	if strings.Contains(errb.String(), "llm:") {
-		t.Fatalf("empty diff must not log llm: %q", errb)
-	}
-}
-
-func TestChangelogVerboseLLMErrorSkip(t *testing.T) {
-	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	a, _, errb := newApp(t, dir)
-	a.Log = log.Writer{W: errb, Level: 1}
-	a.LLM = &llm.Client{BaseURL: srv.URL, Model: "gpt-test", HTTP: srv.Client()}
-	if code := a.Changelog(); code != exitcode.OK {
-		t.Fatalf("code %d %s", code, errb)
-	}
-	got := errb.String()
-	if !strings.Contains(got, "llm: POST "+srv.URL+"/chat/completions model=gpt-test") {
-		t.Fatalf("missing POST: %q", got)
-	}
-	if !strings.Contains(got, "llm: skip (error)") {
-		t.Fatalf("missing skip: %q", got)
-	}
-	if !strings.Contains(got, "llm delta:") {
-		t.Fatalf("missing always-on error: %q", got)
-	}
-	if strings.Contains(got, "llm: done") {
-		t.Fatalf("must not log done: %q", got)
-	}
-}
-
-func TestChangelogVerboseSkipSubjects(t *testing.T) {
-	dir := initRepo(t)
-	runGit(t, dir, "tag", "v1.0.0")
-	mustCommitFile(t, dir, "b/b.go", "package b\n", "add b")
-
-	r, err := git.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, _, errb := newApp(t, dir)
-	a.Log = log.Writer{W: errb, Level: 1}
-	a.Repo = r
-	a.LLM = &llm.Client{BaseURL: "http://127.0.0.1:1", Model: "gpt-test"}
-	a.Ext = &seqExtractor{
-		match: true,
-		extracts: []func(lang.Snapshot) (graph.Graph, error){
-			func(lang.Snapshot) (graph.Graph, error) {
-				return graph.Graph{Nodes: []graph.Node{{Key: "example.com/m", Label: "."}}}, nil
-			},
-			func(lang.Snapshot) (graph.Graph, error) {
-				a.Repo.Bin = filepath.Join(dir, "missing-git")
-				return graph.Graph{
-					Nodes: []graph.Node{
-						{Key: "example.com/m", Label: "."},
-						{Key: "example.com/m/b", Label: "b"},
-					},
-					Edges: []graph.Edge{{From: "example.com/m", To: "example.com/m/b"}},
-				}, nil
-			},
-		},
-	}
-	if code := a.Changelog(); code != exitcode.OK {
-		t.Fatalf("code %d %s", code, errb)
-	}
-	if !strings.Contains(errb.String(), "llm: skip (subjects)") {
-		t.Fatalf("stderr %q", errb)
-	}
-	if !strings.Contains(errb.String(), "warning:") {
-		t.Fatalf("stderr %q", errb)
 	}
 }
 
