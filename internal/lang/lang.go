@@ -7,8 +7,17 @@ type Snapshot struct {
 	Files map[string][]byte
 }
 
+type PackageAPI struct {
+	Key        string
+	Doc        string
+	Signatures []string
+}
+
+type APISet []PackageAPI
+
 type Extractor interface {
 	Name() string
 	Match(Snapshot) bool
 	Extract(Snapshot) (graph.Graph, error)
+	ExtractAPIs(Snapshot) (APISet, error)
 }

@@ -564,6 +564,10 @@ func (e *seqExtractor) Extract(s lang.Snapshot) (graph.Graph, error) {
 	return fn(s)
 }
 
+func (e *seqExtractor) ExtractAPIs(lang.Snapshot) (lang.APISet, error) {
+	return nil, nil
+}
+
 func TestSyncWarnsAndKeepsOKWhenResolveFromFailsAfterWrite(t *testing.T) {
 	dir := initRepo(t)
 
