@@ -239,20 +239,14 @@ func exportedGenDecls(fset *token.FileSet, decl *ast.GenDecl) []string {
 			copy.Comment = nil
 			copy.Names = nil
 			copy.Values = nil
-			for i, name := range spec.Names {
+			for _, name := range spec.Names {
 				if !ast.IsExported(name.Name) {
 					continue
 				}
 				copy.Names = append(copy.Names, name)
-				if len(spec.Values) == len(spec.Names) {
-					copy.Values = append(copy.Values, spec.Values[i])
-				}
 			}
 			if len(copy.Names) == 0 {
 				continue
-			}
-			if len(spec.Values) != len(spec.Names) {
-				copy.Values = spec.Values
 			}
 			exported = &copy
 		}

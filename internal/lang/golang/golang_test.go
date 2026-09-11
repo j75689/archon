@@ -230,6 +230,27 @@ func TestExtractAPIsExportedSignaturesAndPackageDoc(t *testing.T) {
 	}
 }
 
+func TestExtractAPIsOmitsFunctionLiteralInitializerBodies(t *testing.T) {
+	var e Extractor
+	apis, err := e.ExtractAPIs(snap(map[string]string{
+		"go.mod": "module example.com/m\n",
+		"a.go":   "package m\nvar Handler = func() { secret() }\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(apis) != 1 {
+		t.Fatalf("apis: %+v", apis)
+	}
+	joined := strings.Join(apis[0].Signatures, "\n")
+	if !strings.Contains(joined, "var Handler") {
+		t.Fatalf("missing Handler declaration: %q", joined)
+	}
+	if strings.Contains(joined, "secret") || strings.Contains(joined, "{") {
+		t.Fatalf("leaked function literal body: %q", joined)
+	}
+}
+
 func TestExtractAPIsIgnoresBodyOnlyAndTestsGenerated(t *testing.T) {
 	var e Extractor
 	base := snap(map[string]string{
