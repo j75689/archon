@@ -3,6 +3,8 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,6 +71,74 @@ func TestToolsListHasSevenNames(t *testing.T) {
 		}
 		if tool.Name == "diff" && tool.Description != "First-party graph and exported-signature changes from→to" {
 			t.Fatalf("diff description %q", tool.Description)
+		}
+		if tool.Name == "fingerprint" && !strings.Contains(tool.Description, "does not fail") {
+			t.Fatalf("fingerprint description %q", tool.Description)
+		}
+	}
+}
+
+func TestNewAdvertisesVersion(t *testing.T) {
+	prev := Version
+	Version = "vtest"
+	t.Cleanup(func() { Version = prev })
+
+	dir := initRepo(t)
+	session := connect(t, newTestApp(t, dir))
+	info := session.InitializeResult()
+	if info == nil || info.ServerInfo == nil {
+		t.Fatal("missing server info")
+	}
+	if info.ServerInfo.Version != "vtest" {
+		t.Fatalf("version=%q", info.ServerInfo.Version)
+	}
+}
+
+func TestIOTransportInitializeStdoutIsJSONLines(t *testing.T) {
+	dir := initRepo(t)
+	srv := New(newTestApp(t, dir))
+
+	clientR, serverW := io.Pipe()
+	serverR, clientW := io.Pipe()
+	var captured bytes.Buffer
+	out := struct {
+		io.Writer
+		io.Closer
+	}{io.MultiWriter(serverW, &captured), serverW}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.MCP.Run(ctx, &mcpsdk.IOTransport{Reader: serverR, Writer: out})
+	}()
+
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "v0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcpsdk.IOTransport{Reader: clientR, Writer: clientW}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tools) != 7 {
+		t.Fatalf("len=%d", len(got.Tools))
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_ = clientW.Close()
+	cancel()
+	<-errCh
+
+	for _, line := range bytes.Split(captured.Bytes(), []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		if !json.Valid(line) {
+			t.Fatalf("non-JSON stdout line %q", line)
 		}
 	}
 }

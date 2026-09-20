@@ -20,7 +20,7 @@ graph TD
     internal_app --> internal_git
     internal_app --> internal_graph
     internal_app --> internal_lang
-    internal_app --> internal_golang[internal/lang/golang]
+    internal_app --> internal_lang_golang[internal/lang/golang]
     internal_app --> internal_llm
     internal_app --> internal_log
     internal_app --> internal_prompt

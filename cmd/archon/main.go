@@ -1,11 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -20,15 +20,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "dev"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runContext(context.Background(), args, stdout, stderr)
+}
+
+func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	mcp.Version = version
 	root := newRoot(stdout, stderr)
 	root.SetArgs(args)
 
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(ctx); err != nil {
 		var exitErr errExit
 		if errors.As(err, &exitErr) {
 			return exitErr.code
@@ -61,8 +68,11 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().DurationVar(&timeout, "timeout", 60*time.Second, "LLM HTTP timeout")
 	root.PersistentFlags().CountVarP(&verbose, "verbose", "v", "progress on stderr; repeat for per-file (-vv)")
 
-	newApp := func() (*app.App, error) {
-		repo, err := git.Open(".")
+	newApp := func(start string) (*app.App, error) {
+		if start == "" {
+			start = "."
+		}
+		repo, err := git.Open(start)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return nil, errExit{code: exitcode.Fail}
@@ -112,7 +122,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Fail if the architecture doc does not match the graph at --to",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := newApp()
+			a, err := newApp("")
 			if err != nil {
 				return err
 			}
@@ -125,7 +135,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Fail if first-party structure changed between --from and --to",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := newApp()
+			a, err := newApp("")
 			if err != nil {
 				return err
 			}
@@ -138,7 +148,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Write the graph at --to into the architecture doc",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := newApp()
+			a, err := newApp("")
 			if err != nil {
 				return err
 			}
@@ -151,7 +161,7 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Print first-party structure changes",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := newApp()
+			a, err := newApp("")
 			if err != nil {
 				return err
 			}
@@ -169,50 +179,9 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Run an MCP server on stdio (default) or Streamable HTTP",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			start := mcpRoot
-			if start == "" {
-				start = "."
-			}
-			repo, err := git.Open(start)
+			a, err := newApp(mcpRoot)
 			if err != nil {
-				fmt.Fprintln(stderr, err)
-				return errExit{code: exitcode.Fail}
-			}
-			home, _ := os.UserHomeDir()
-			cfg, err := config.Load(
-				repo.Root,
-				config.Values{
-					From: from,
-					To:   to,
-					Doc:  doc,
-				},
-				os.Getenv,
-				os.ReadFile,
-				home,
-			)
-			if err != nil {
-				fmt.Fprintln(stderr, err)
-				return errExit{code: exitcode.Fail}
-			}
-			a := app.New(repo)
-			a.Stdout = stdout
-			a.Stderr = stderr
-			a.Log = log.FromVerbose(stderr, verbose)
-			a.From = cfg.From
-			a.To = cfg.To
-			a.Doc = cfg.Doc
-			a.Anchor = cfg.Anchor
-			a.Model = cfg.Model
-			a.BaseURL = cfg.BaseURL
-			a.APIKey = cfg.APIKey
-			a.Generators = cfg.Generators
-			if cfg.LLM {
-				a.LLM = &llm.Client{
-					BaseURL: cfg.BaseURL,
-					Model:   cfg.Model,
-					APIKey:  cfg.APIKey,
-					Timeout: timeout,
-				}
+				return err
 			}
 			srv := mcp.New(a)
 			if !mcpHTTP {
@@ -230,8 +199,8 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 				token = os.Getenv("ARCHON_MCP_TOKEN")
 			}
 			addr := net.JoinHostPort(mcpHost, strconv.Itoa(mcpPort))
-			handler := mcp.Bearer(token, srv.HTTPHandler())
-			if err := http.ListenAndServe(addr, handler); err != nil {
+			httpSrv := mcp.NewHTTPServer(addr, mcp.Bearer(token, srv.HTTPHandler()))
+			if err := mcp.ServeHTTP(cmd.Context(), httpSrv); err != nil {
 				fmt.Fprintln(stderr, err)
 				return errExit{code: exitcode.Fail}
 			}

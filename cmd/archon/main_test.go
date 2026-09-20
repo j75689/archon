@@ -2,17 +2,24 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/j75689/archon/internal/exitcode"
 	"github.com/j75689/archon/internal/fingerprint"
 	"github.com/j75689/archon/internal/git"
 	"github.com/j75689/archon/internal/graph"
 	"github.com/j75689/archon/internal/lang/golang"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestRunHelpListsTimeoutFlag(t *testing.T) {
@@ -74,6 +81,108 @@ func TestRunMCPNoRepo(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "not a git repository") {
 		t.Fatalf("stderr %q", stderr.String())
+	}
+}
+
+func TestRunMCPRootOpensRepoFromNonRepoCwd(t *testing.T) {
+	repo := initRepo(t)
+	t.Chdir(t.TempDir())
+
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer outR.Close()
+
+	oldIn, oldOut := os.Stdin, os.Stdout
+	os.Stdin, os.Stdout = inR, outW
+	t.Cleanup(func() {
+		os.Stdin, os.Stdout = oldIn, oldOut
+	})
+
+	var stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- run([]string{"mcp", "--root", repo}, os.Stdout, &stderr)
+	}()
+	if err := inW.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case code := <-done:
+		if strings.Contains(stderr.String(), "not a git repository") {
+			t.Fatalf("ignored --root: code=%d stderr=%q", code, stderr.String())
+		}
+		if code != exitcode.OK && code != exitcode.Fail {
+			t.Fatalf("code=%d stderr=%q", code, stderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("mcp --root hung")
+	}
+}
+
+func TestRunMCPRootHTTPLoopbackServesAndStops(t *testing.T) {
+	repo := initRepo(t)
+	t.Chdir(t.TempDir())
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- runContext(ctx, []string{
+			"mcp", "--root", repo, "--http", "--http.port", strconv.Itoa(port),
+		}, io.Discard, &stderr)
+	}()
+
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d", port)
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "v0.0.1"}, nil)
+	var session *mcpsdk.ClientSession
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		session, err = client.Connect(context.Background(), &mcpsdk.StreamableClientTransport{
+			Endpoint: endpoint,
+		}, nil)
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("connect: %v stderr=%q", err, stderr.String())
+	}
+	got, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tools) != 7 {
+		t.Fatalf("len=%d", len(got.Tools))
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != exitcode.OK {
+			t.Fatalf("code=%d stderr=%q", code, stderr.String())
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("mcp --http did not stop after cancel")
 	}
 }
 

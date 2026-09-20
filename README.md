@@ -100,6 +100,7 @@ If `generators` is omitted or empty, those three default paths are used with bui
 | `ARCHON_MODEL` | Chat model (default `gpt-4o-mini`) |
 | `ARCHON_BASE_URL` | OpenAI-compatible base URL |
 | `OPENAI_API_KEY` | API key (do not put keys in YAML) |
+| `ARCHON_MCP_TOKEN` | Bearer token for `archon mcp --http` (overridden by `--http.token`) |
 
 The LLM is used only when a key is set **or** `base_url` / `ARCHON_BASE_URL` is set explicitly (for Ollama, e.g. `http://localhost:11434/v1`). Requests receive the graph, package docs, and exported signatures — never function bodies or `.env*` files. Failures print one stderr line, leave generator files and the lockfile untouched, and exit 0.
 

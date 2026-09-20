@@ -33,10 +33,14 @@ type Result struct {
 	Hash     string `json:"hash,omitempty"`
 }
 
+// Version is the MCP implementation version advertised to clients.
+// The CLI may overwrite this from a build-time version string.
+var Version = "dev"
+
 func New(a *app.App) *Server {
 	s := &Server{
 		App: a,
-		MCP: mcpsdk.NewServer(&mcpsdk.Implementation{Name: "archon", Version: "dev"}, nil),
+		MCP: mcpsdk.NewServer(&mcpsdk.Implementation{Name: "archon", Version: Version}, nil),
 	}
 
 	mcpsdk.AddTool(s.MCP, &mcpsdk.Tool{
@@ -57,7 +61,7 @@ func New(a *app.App) *Server {
 	}, s.toolSync)
 	mcpsdk.AddTool(s.MCP, &mcpsdk.Tool{
 		Name:        "fingerprint",
-		Description: "Hash graph+APIs at to and compare .archon/graph.json",
+		Description: "Hash graph+APIs at to and compare .archon/graph.json. Reports stale; does not fail like check.",
 	}, s.toolFingerprint)
 	mcpsdk.AddTool(s.MCP, &mcpsdk.Tool{
 		Name:        "graph",
