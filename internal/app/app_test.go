@@ -637,6 +637,25 @@ func TestSyncVerboseSkipNoClient(t *testing.T) {
 	}
 }
 
+func TestStructureExtractsFirstPartyGraph(t *testing.T) {
+	dir := initRepo(t)
+	a, _, _ := newApp(t, dir)
+	g, apis, code := a.Structure("HEAD")
+	if code != exitcode.OK {
+		t.Fatalf("code %d", code)
+	}
+	if len(g.Nodes) == 0 {
+		t.Fatal("no nodes")
+	}
+	if FormatGraph(g) == "" {
+		t.Fatal("empty FormatGraph")
+	}
+	if FormatAPIs(apis) == "" && len(apis) == 0 {
+		// empty APIs text is ok when there are no exports; still call it
+	}
+	_ = apis
+}
+
 func mustExtract(t *testing.T, snap lang.Snapshot) graph.Graph {
 	t.Helper()
 	var e golang.Extractor

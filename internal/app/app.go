@@ -105,6 +105,14 @@ func (a *App) structureAt(rev string) (graph.Graph, lang.APISet, int) {
 	return g, apis, exitcode.OK
 }
 
+func (a *App) Structure(rev string) (graph.Graph, lang.APISet, int) {
+	a.attachLog()
+	if rev == "" {
+		rev = "HEAD"
+	}
+	return a.structureAt(rev)
+}
+
 func (a *App) Check() int {
 	a.attachLog()
 	if a.From != "" {
@@ -262,8 +270,8 @@ func (a *App) Sync() int {
 	prevG := fingerprint.GraphFromLock(lf)
 	diffText := fingerprint.FormatStructure(graph.DiffGraphs(prevG, toG), fingerprint.DiffAPIs(lf.APIs, toAPIs))
 	data := prompt.Data{
-		Graph: formatGraph(toG),
-		APIs:  formatAPIs(toAPIs),
+		Graph: FormatGraph(toG),
+		APIs:  FormatAPIs(toAPIs),
 		Diff:  diffText,
 	}
 
@@ -355,7 +363,7 @@ func (a *App) Sync() int {
 	return exitcode.OK
 }
 
-func formatGraph(g graph.Graph) string {
+func FormatGraph(g graph.Graph) string {
 	var b strings.Builder
 	for _, n := range g.Nodes {
 		b.WriteString(n.Key)
@@ -370,7 +378,7 @@ func formatGraph(g graph.Graph) string {
 	return b.String()
 }
 
-func formatAPIs(apis lang.APISet) string {
+func FormatAPIs(apis lang.APISet) string {
 	var b strings.Builder
 	for _, api := range apis {
 		b.WriteString(api.Key)
