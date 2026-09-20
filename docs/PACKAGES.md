@@ -1,44 +1,47 @@
 # Archon Documentation
 
-Archon is a tool for documenting and managing software project architecture, specifically focusing on dependency graphs and API evolution.
+Archon is a tool for architectural analysis, documentation, and drift detection. It provides insights into codebase structure and API signatures, enabling automated verification and LLM-powered insights.
 
 ## Packages
 
-### `cmd/archon`
-The entry point for the Archon CLI application. It handles process initialization and error reporting.
+### `github.com/j75689/archon/cmd/archon`
+The entry point for the Archon CLI application. It coordinates configuration, logging, and command-line execution for the core logic provided by `internal/app`.
 
-### `internal/app`
-Orchestrates the core logic, including changelog generation, dependency checking, and synchronization of documentation with code state.
+### `github.com/j75689/archon/internal/app`
+The core application logic. It orchestrates the extraction of codebase structure and API information, performs diffing, and manages synchronization tasks.
 
-### `internal/config`
-Manages application configuration, including generator definitions for automated documentation tasks.
+### `github.com/j75689/archon/internal/config`
+Handles the loading and parsing of project-specific configuration, including generator definitions and LLM settings.
 
-### `internal/doc`
-Provides utilities for manipulating documentation files, specifically handling anchors and regions to maintain machine-readable metadata within text documents.
+### `github.com/j75689/archon/internal/doc`
+Provides utilities for embedding and updating documentation anchors within files, allowing for stable regions that can be updated without overwriting surrounding text.
 
-### `internal/exitcode`
-Defines standard exit codes for the CLI to distinguish between success, documentation gating, and general failures.
+### `github.com/j75689/archon/internal/exitcode`
+Defines standardized exit codes for the application, facilitating integration with CI/CD pipelines.
 
-### `internal/fingerprint`
-Responsible for calculating the state of a repository by hashing dependency graphs and API sets. It manages lockfiles to detect drift between code and documentation.
+### `github.com/j75689/archon/internal/fingerprint`
+Responsible for computing hashes, creating lockfiles, and detecting drifts between codebase versions. It compares graph structures and API sets to identify changes.
 
-### `internal/git`
-Provides wrappers around Git operations, enabling snapshotting of repository states, diffing changes between revisions, and resolving repository metadata.
+### `github.com/j75689/archon/internal/git`
+Wraps Git operations. It provides functionality for navigating repository history, snapshotting code at specific revisions, and describing tags.
 
-### `internal/graph`
-Defines the structure of dependency graphs. It provides logic for diffing graphs and rendering them into visual formats like Mermaid.
+### `github.com/j75689/archon/internal/graph`
+Defines the graph data model and provides operations for computing differences between graphs, compiling graphs, and rendering them into visualization formats like Mermaid.
 
-### `internal/lang`
-Defines the interfaces required to support multi-language analysis, specifically providing methods for code extraction and API identification.
+### `github.com/j75689/archon/internal/lang`
+Defines the interfaces for source code analysis. It provides the abstractions used to extract structural and API-level data from different programming languages.
 
-### `internal/lang/golang`
-Implements the `lang.Extractor` interface for Go, allowing Archon to analyze Go modules, extract structural graphs, and identify public API signatures.
+### `github.com/j75689/archon/internal/lang/golang`
+Implements the `lang.Extractor` interface for Go projects. It inspects Go source code to build structural graphs and identify exported API signatures.
 
-### `internal/llm`
-Handles interactions with Large Language Models to generate intelligent summaries or documentation based on the detected structural and API changes.
+### `github.com/j75689/archon/internal/llm`
+Handles interactions with LLM providers. It generates natural language summaries and insights based on the structural diffs provided by the graph analysis.
 
-### `internal/log`
-Provides a consistent logging interface across the application, supporting varying levels of verbosity.
+### `github.com/j75689/archon/internal/log`
+Provides a simple, consistent logging interface used across all internal packages, with support for verbose output.
 
-### `internal/prompt`
-Manages templates used for interacting with LLMs. It includes a rendering engine to inject graph, API, and diff data into configured prompts.
+### `github.com/j75689/archon/internal/mcp`
+Implements the Model Context Protocol (MCP) server. This allows AI assistants and external tools to interact with Archon’s analysis capabilities directly via standardized interfaces.
+
+### `github.com/j75689/archon/internal/prompt`
+Manages the templates used for LLM interaction. It loads and renders prompts using project data to drive automated reporting.

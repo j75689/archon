@@ -1,70 +1,74 @@
-# Archon Architecture Documentation
+# Archon Documentation
 
-Archon is a tool for tracking and generating documentation based on code structure changes and API evolution.
+Archon is a tool for tracking and analyzing the architecture of a Go project. It enables tracking project structures, identifying API changes across git revisions, and providing LLM-powered insights through a Model Context Protocol (MCP) server.
 
-## System Diagram
+## System Architecture
 
 ```mermaid
 graph TD
-    cmd[cmd/archon] --> app[internal/app]
-    cmd --> cfg[internal/config]
-    cmd --> ec[internal/exitcode]
-    cmd --> git[internal/git]
-    cmd --> llm[internal/llm]
-    cmd --> log[internal/log]
-
-    app --> cfg
-    app --> ec
-    app --> fp[internal/fingerprint]
-    app --> git
-    app --> grph[internal/graph]
-    app --> lang[internal/lang]
-    app --> lang_go[internal/lang/golang]
-    app --> llm
-    app --> log
-    app --> prmpt[internal/prompt]
-
-    fp --> grph
-    fp --> lang
-    git --> lang
-    git --> log
-    lang --> grph
-    lang_go --> grph
-    lang_go --> lang
-    lang_go --> log
-    llm --> grph
-    llm --> log
-    prmpt --> cfg
+    cmd_archon[cmd/archon] --> internal_app[internal/app]
+    cmd_archon --> internal_config[internal/config]
+    cmd_archon --> internal_exitcode[internal/exitcode]
+    cmd_archon --> internal_git[internal/git]
+    cmd_archon --> internal_llm[internal/llm]
+    cmd_archon --> internal_log[internal/log]
+    cmd_archon --> internal_mcp[internal/mcp]
+    
+    internal_app --> internal_config
+    internal_app --> internal_exitcode
+    internal_app --> internal_fingerprint
+    internal_app --> internal_git
+    internal_app --> internal_graph
+    internal_app --> internal_lang
+    internal_app --> internal_golang[internal/lang/golang]
+    internal_app --> internal_llm
+    internal_app --> internal_log
+    internal_app --> internal_prompt
+    
+    internal_mcp --> internal_app
+    internal_mcp --> internal_exitcode
+    internal_mcp --> internal_fingerprint
+    
+    internal_fingerprint --> internal_graph
+    internal_fingerprint --> internal_lang
+    
+    internal_lang_golang --> internal_graph
+    internal_lang_golang --> internal_lang
+    internal_lang_golang --> internal_log
+    
+    internal_llm --> internal_graph
+    internal_llm --> internal_log
+    
+    internal_git --> internal_lang
+    internal_git --> internal_log
 ```
 
-## Package Overview
-
-### `cmd/archon`
-Entry point of the application. Handles CLI execution and error propagation.
+## Key Components
 
 ### `internal/app`
-Orchestrates core functionality including `Sync`, `Changelog`, `Check`, and `Diff` operations. Uses `App` struct to manage repository state, LLM integration, and configuration.
+The core engine that coordinates repository snapshots, extraction logic, and command execution (Sync, Diff, Structure).
 
-### `internal/config`
-Manages application settings, generator definitions, and loading of configuration files.
-
-### `internal/doc`
-Provides utility functions for manipulating documentation files, specifically handling anchors and region replacements for automated updates.
+### `internal/mcp`
+Provides an interface for AI assistants to interact with the Archon engine. It supports remote connectivity and standard IO operation to perform architectural drift analysis.
 
 ### `internal/fingerprint`
-Responsible for analyzing codebase state, generating structure hashes, and calculating diffs between API sets and dependency graphs to identify significant changes.
+Responsible for calculating hashes and identifying API/Graph diffs. It facilitates the `Lockfile` system to detect architectural drift between git commits.
 
-### `internal/git`
-Wraps Git operations to interact with the repository, including history analysis, tagging, and snapshotting specific revisions for analysis.
+### `internal/lang`
+Defines the `Extractor` interface, allowing Archon to support multiple languages, with `internal/lang/golang` providing the primary implementation for Go analysis.
 
-### `internal/graph`
-Defines the structure of the dependency graph and provides methods for generating reports and visualizing architecture via Mermaid diagrams.
+## API Reference Summary
 
-### `internal/lang` & `internal/lang/golang`
-Defines the extraction interfaces for analyzing source code. `golang` implements these for Go, providing structural extraction and API signature parsing.
+| Package | Key Exports |
+| :--- | :--- |
+| **`internal/app`** | `New`, `Sync`, `Diff`, `Structure`, `FormatAPIs`, `FormatGraph` |
+| **`internal/config`** | `Load`, `Values`, `Generator` |
+| **`internal/graph`** | `DiffGraphs`, `RenderMermaid`, `Compile` |
+| **`internal/fingerprint`** | `Hash`, `DiffAPIs`, `NewLockfile` |
+| **`internal/llm`** | `Complete`, `Delta`, `Client` |
+| **`internal/mcp`** | `New`, `Server`, `Connect`, `HTTPHandler` |
 
-### `internal/llm`
-Handles communication with language models to generate documentation summaries and change descriptions based on structural diffs.
-
-### `internal/prompt`
-Manages templates for LLM interactions, loading custom prompts from the repository and rendering them with provided data context.
+## Recent Changes
+- Introduced `internal/mcp` package for external integration.
+- Updated `internal/llm` client signature to include `Timeout`.
+- Enhanced `internal/app` with `Structure`, `FormatAPIs`, and `FormatGraph` functions.
