@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/j75689/archon/internal/app"
@@ -65,6 +66,30 @@ func TestToolsListHasSevenNames(t *testing.T) {
 		if !want[tool.Name] {
 			t.Fatalf("unexpected %q", tool.Name)
 		}
+	}
+}
+
+func TestSyncWithoutLLMDoesNotWrite(t *testing.T) {
+	dir := initRepo(t)
+	session := connect(t, newTestApp(t, dir))
+	res, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "sync"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("isError %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".archon", "graph.json")); !os.IsNotExist(err) {
+		t.Fatalf("lockfile written: %v", err)
+	}
+	text := ""
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcpsdk.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	if !strings.Contains(text, "llm: skip (no client)") {
+		t.Fatalf("text %q", text)
 	}
 }
 
