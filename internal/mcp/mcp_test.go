@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -66,6 +67,59 @@ func TestToolsListHasSevenNames(t *testing.T) {
 		if !want[tool.Name] {
 			t.Fatalf("unexpected %q", tool.Name)
 		}
+		if tool.Name == "diff" && tool.Description != "First-party graph and exported-signature changes from→to" {
+			t.Fatalf("diff description %q", tool.Description)
+		}
+	}
+}
+
+func TestResourcesListAndReadHappyPath(t *testing.T) {
+	dir := initRepo(t)
+	mustCommitFile(t, dir, "a.go", "package m\nfunc Hello() {}\n", "export")
+
+	session := connect(t, newTestApp(t, dir))
+	ctx := context.Background()
+
+	got, err := session.ListResources(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]bool{
+		"archon://fingerprint": true,
+		"archon://graph":       true,
+		"archon://apis":        true,
+	}
+	if len(got.Resources) != len(want) {
+		t.Fatalf("len=%d", len(got.Resources))
+	}
+	for _, res := range got.Resources {
+		if !want[res.URI] {
+			t.Fatalf("unexpected resource %q", res.URI)
+		}
+	}
+
+	for _, tc := range []struct {
+		uri  string
+		want string
+	}{
+		{uri: "archon://fingerprint"},
+		{uri: "archon://graph", want: "example.com/m"},
+		{uri: "archon://apis", want: "func Hello()"},
+	} {
+		res, err := session.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: tc.uri})
+		if err != nil {
+			t.Fatalf("%s protocol: %v", tc.uri, err)
+		}
+		if len(res.Contents) != 1 {
+			t.Fatalf("%s contents=%d", tc.uri, len(res.Contents))
+		}
+		if res.Contents[0].Text == "" {
+			t.Fatalf("%s returned empty text", tc.uri)
+		}
+		if tc.want != "" && !strings.Contains(res.Contents[0].Text, tc.want) {
+			t.Fatalf("%s text %q", tc.uri, res.Contents[0].Text)
+		}
 	}
 }
 
@@ -78,6 +132,13 @@ func TestSyncWithoutLLMDoesNotWrite(t *testing.T) {
 	}
 	if res.IsError {
 		t.Fatalf("isError %+v", res)
+	}
+	out := structuredResult(t, res)
+	if out["ok"] != true {
+		t.Fatalf("ok=%v", out["ok"])
+	}
+	if structuredInt(t, out, "exit_code") != exitcode.OK {
+		t.Fatalf("exit_code=%v", out["exit_code"])
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".archon", "graph.json")); !os.IsNotExist(err) {
 		t.Fatalf("lockfile written: %v", err)
@@ -168,6 +229,81 @@ func TestNoGoModIsToolError(t *testing.T) {
 	}
 }
 
+func TestNoGoModIsResourceError(t *testing.T) {
+	dir := initEmptyRepo(t)
+	mustCommitFile(t, dir, "README.md", "x\n", "init")
+	session := connect(t, newTestApp(t, dir))
+	_, err := session.ReadResource(context.Background(), &mcpsdk.ReadResourceParams{URI: "archon://graph"})
+	if err == nil {
+		t.Fatal("want read resource error")
+	}
+	if !strings.Contains(err.Error(), "no supported language") {
+		t.Fatalf("err %q", err)
+	}
+}
+
+func TestDiffAndChangelogReturnStructuredChangeResult(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "tag", "v1.0.0")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "b")
+
+	session := connect(t, newTestApp(t, dir))
+	ctx := context.Background()
+	for _, name := range []string{"diff", "changelog"} {
+		res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{Name: name})
+		if err != nil {
+			t.Fatalf("%s protocol: %v", name, err)
+		}
+		if res.IsError {
+			t.Fatalf("%s isError: %+v", name, res)
+		}
+		out := structuredResult(t, res)
+		if out["ok"] != false {
+			t.Fatalf("%s ok=%v", name, out["ok"])
+		}
+		if out["changed"] != true {
+			t.Fatalf("%s changed=%v", name, out["changed"])
+		}
+		if structuredInt(t, out, "exit_code") != exitcode.Gate {
+			t.Fatalf("%s exit_code=%v", name, out["exit_code"])
+		}
+		if !strings.Contains(textContent(res.Content), "added nodes:") {
+			t.Fatalf("%s content=%q", name, textContent(res.Content))
+		}
+	}
+}
+
+func TestGraphToolToArgUsesOlderCommitAndRestoresAppState(t *testing.T) {
+	dir := initRepo(t)
+	old := gitRev(t, dir, "HEAD")
+	mustCommitFile(t, dir, "b/b.go", "package b\n", "b")
+
+	a := newTestApp(t, dir)
+	a.To = "HEAD"
+	session := connect(t, a)
+
+	res, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "graph",
+		Arguments: map[string]any{"to": old},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("isError %+v", res)
+	}
+	text := textContent(res.Content)
+	if !strings.Contains(text, "example.com/m") {
+		t.Fatalf("content %q", text)
+	}
+	if strings.Contains(text, "example.com/m/b") {
+		t.Fatalf("content should not include newer package: %q", text)
+	}
+	if a.To != "HEAD" {
+		t.Fatalf("app.To=%q", a.To)
+	}
+}
+
 func gitOK(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -205,6 +341,17 @@ func tryGit(dir string, args ...string) error {
 	return err
 }
 
+func gitRev(t *testing.T, dir, rev string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", rev)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-parse %s: %v\n%s", rev, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func initEmptyRepo(t *testing.T) string {
 	t.Helper()
 	gitOK(t)
@@ -236,4 +383,42 @@ func mustCommitFile(t *testing.T, dir, name, body, msg string) {
 	}
 	runGit(t, dir, "add", name)
 	runGit(t, dir, "commit", "-m", msg)
+}
+
+func textContent(content []mcpsdk.Content) string {
+	var text string
+	for _, c := range content {
+		if tc, ok := c.(*mcpsdk.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	return text
+}
+
+func structuredResult(t *testing.T, res *mcpsdk.CallToolResult) map[string]any {
+	t.Helper()
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("structuredContent=%T %#v", res.StructuredContent, res.StructuredContent)
+	}
+	return out
+}
+
+func structuredInt(t *testing.T, out map[string]any, key string) int {
+	t.Helper()
+	switch v := out[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case string:
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			t.Fatalf("%s=%q", key, v)
+		}
+		return n
+	default:
+		t.Fatalf("%s=%T %#v", key, v, v)
+	}
+	return 0
 }

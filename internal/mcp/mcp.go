@@ -45,7 +45,7 @@ func New(a *app.App) *Server {
 	}, s.toolCheck)
 	mcpsdk.AddTool(s.MCP, &mcpsdk.Tool{
 		Name:        "diff",
-		Description: "First-party graph and exported-signature changes from to",
+		Description: "First-party graph and exported-signature changes from→to",
 	}, s.toolDiff)
 	mcpsdk.AddTool(s.MCP, &mcpsdk.Tool{
 		Name:        "changelog",

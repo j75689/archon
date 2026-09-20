@@ -656,6 +656,28 @@ func TestStructureExtractsFirstPartyGraph(t *testing.T) {
 	_ = apis
 }
 
+func TestStructureEmptyDefaultsToHEAD(t *testing.T) {
+	dir := initRepo(t)
+	a, _, _ := newApp(t, dir)
+
+	gotGraph, gotAPIs, gotCode := a.Structure("")
+	if gotCode != exitcode.OK {
+		t.Fatalf("empty rev code %d", gotCode)
+	}
+
+	wantGraph, wantAPIs, wantCode := a.Structure("HEAD")
+	if wantCode != exitcode.OK {
+		t.Fatalf("HEAD rev code %d", wantCode)
+	}
+
+	if FormatGraph(gotGraph) != FormatGraph(wantGraph) {
+		t.Fatalf("graph mismatch:\nempty=%q\nhead=%q", FormatGraph(gotGraph), FormatGraph(wantGraph))
+	}
+	if FormatAPIs(gotAPIs) != FormatAPIs(wantAPIs) {
+		t.Fatalf("apis mismatch:\nempty=%q\nhead=%q", FormatAPIs(gotAPIs), FormatAPIs(wantAPIs))
+	}
+}
+
 func mustExtract(t *testing.T, snap lang.Snapshot) graph.Graph {
 	t.Helper()
 	var e golang.Extractor
