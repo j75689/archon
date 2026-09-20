@@ -91,6 +91,10 @@ func (s *Server) Connect(ctx context.Context, t mcpsdk.Transport, opts *mcpsdk.S
 	return s.MCP.Connect(ctx, t, opts)
 }
 
+func (s *Server) RunStdio(ctx context.Context) error {
+	return s.MCP.Run(ctx, &mcpsdk.StdioTransport{})
+}
+
 func (s *Server) applyArgs(in Args) {
 	if in.From != "" {
 		s.App.From = in.From

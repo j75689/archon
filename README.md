@@ -38,6 +38,30 @@ Exit **2** is an execution error (not a git repo, missing `git`, unreadable revi
 
 `--from` is required for `diff` / `changelog` if there is no reachable tag (`pass --from or create a tag`). `check` and `sync` ignore `--from`.
 
+## MCP
+
+`archon mcp` speaks the Model Context Protocol on **stdio** (default) or **Streamable HTTP**. The process cwd (or `--root`) must be a git repo. Tools: `check`, `diff`, `changelog`, `sync`, `fingerprint`, `graph`, `apis`. Resources: `archon://fingerprint`, `archon://graph`, `archon://apis`. Only `sync` may call the LLM, and only when a key or explicit `base_url` is configured - same as the CLI.
+
+Cursor (stdio):
+
+```json
+{
+  "mcpServers": {
+    "archon": {
+      "command": "archon",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+HTTP:
+
+```bash
+archon mcp --http --http.host 127.0.0.1 --http.port 8743
+# optional: --http.token or ARCHON_MCP_TOKEN -> Authorization: Bearer ...
+```
+
 ## What counts as structure
 
 The fingerprint hashes the canonical JSON of:

@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/j75689/archon/internal/app"
@@ -13,6 +16,7 @@ import (
 	"github.com/j75689/archon/internal/git"
 	"github.com/j75689/archon/internal/llm"
 	"github.com/j75689/archon/internal/log"
+	"github.com/j75689/archon/internal/mcp"
 	"github.com/spf13/cobra"
 )
 
@@ -154,6 +158,92 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 			return exitCodeErr(a.Changelog())
 		},
 	})
+
+	var mcpRoot string
+	var mcpHTTP bool
+	var mcpHost string
+	var mcpPort int
+	var mcpToken string
+	mcpCmd := &cobra.Command{
+		Use:   "mcp",
+		Short: "Run an MCP server on stdio (default) or Streamable HTTP",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			start := mcpRoot
+			if start == "" {
+				start = "."
+			}
+			repo, err := git.Open(start)
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return errExit{code: exitcode.Fail}
+			}
+			home, _ := os.UserHomeDir()
+			cfg, err := config.Load(
+				repo.Root,
+				config.Values{
+					From: from,
+					To:   to,
+					Doc:  doc,
+				},
+				os.Getenv,
+				os.ReadFile,
+				home,
+			)
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return errExit{code: exitcode.Fail}
+			}
+			a := app.New(repo)
+			a.Stdout = stdout
+			a.Stderr = stderr
+			a.Log = log.FromVerbose(stderr, verbose)
+			a.From = cfg.From
+			a.To = cfg.To
+			a.Doc = cfg.Doc
+			a.Anchor = cfg.Anchor
+			a.Model = cfg.Model
+			a.BaseURL = cfg.BaseURL
+			a.APIKey = cfg.APIKey
+			a.Generators = cfg.Generators
+			if cfg.LLM {
+				a.LLM = &llm.Client{
+					BaseURL: cfg.BaseURL,
+					Model:   cfg.Model,
+					APIKey:  cfg.APIKey,
+					Timeout: timeout,
+				}
+			}
+			srv := mcp.New(a)
+			if !mcpHTTP {
+				if verbose > 0 && (mcpHost != "127.0.0.1" || mcpPort != 8743 || mcpToken != "" || os.Getenv("ARCHON_MCP_TOKEN") != "") {
+					fmt.Fprintln(stderr, "mcp: --http.host/--http.port/--http.token ignored without --http")
+				}
+				if err := srv.RunStdio(cmd.Context()); err != nil {
+					fmt.Fprintln(stderr, err)
+					return errExit{code: exitcode.Fail}
+				}
+				return nil
+			}
+			token := mcpToken
+			if token == "" {
+				token = os.Getenv("ARCHON_MCP_TOKEN")
+			}
+			addr := net.JoinHostPort(mcpHost, strconv.Itoa(mcpPort))
+			handler := mcp.Bearer(token, srv.HTTPHandler())
+			if err := http.ListenAndServe(addr, handler); err != nil {
+				fmt.Fprintln(stderr, err)
+				return errExit{code: exitcode.Fail}
+			}
+			return nil
+		},
+	}
+	mcpCmd.Flags().StringVar(&mcpRoot, "root", "", "git repo root (default: cwd)")
+	mcpCmd.Flags().BoolVar(&mcpHTTP, "http", false, "serve Streamable HTTP instead of stdio")
+	mcpCmd.Flags().StringVar(&mcpHost, "http.host", "127.0.0.1", "HTTP listen host")
+	mcpCmd.Flags().IntVar(&mcpPort, "http.port", 8743, "HTTP listen port")
+	mcpCmd.Flags().StringVar(&mcpToken, "http.token", "", "Bearer token (overrides ARCHON_MCP_TOKEN)")
+	root.AddCommand(mcpCmd)
 
 	return root
 }

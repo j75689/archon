@@ -27,6 +27,20 @@ func TestRunHelpListsTimeoutFlag(t *testing.T) {
 	}
 }
 
+func TestRunMCPHelpListsHTTPFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"mcp", "--help"}, &stdout, &stderr)
+	if code != exitcode.OK {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	help := stdout.String() + stderr.String()
+	for _, flag := range []string{"--http", "--http.host", "--http.port", "--http.token", "--root"} {
+		if !strings.Contains(help, flag) {
+			t.Fatalf("help missing %s: %q", flag, help)
+		}
+	}
+}
+
 func TestRunDiffNoRepo(t *testing.T) {
 	gitOK(t)
 
@@ -43,6 +57,23 @@ func TestRunDiffNoRepo(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "not a git repository") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunMCPNoRepo(t *testing.T) {
+	gitOK(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"mcp"}, &stdout, &stderr)
+	if code != exitcode.Fail {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "not a git repository") {
+		t.Fatalf("stderr %q", stderr.String())
 	}
 }
 
