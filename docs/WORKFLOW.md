@@ -1,77 +1,41 @@
-# Archon Documentation
+# Workflow
 
-Archon is a tool for tracking and documenting software architecture evolution through structural analysis of source code. It utilizes Git history, structural graph extraction, and LLM-powered changelog generation.
+Archon operates as a codebase analysis and documentation tool that tracks structural changes in source code by comparing snapshots across different Git revisions. The system orchestrates code extraction using language-specific plugins, generates dependency graphs and API sets, and identifies differences between states. This data is processed through LLM integration or local documentation formatters to produce actionable insights, which can be served via CLI commands or an MCP (Model Context Protocol) server.
 
-## Component Dependency Graph
+## Command / Data Flow
 
 ```mermaid
-graph TD
-    cmd_archon[cmd/archon] --> internal_app[internal/app]
-    cmd_archon --> internal_config[internal/config]
-    cmd_archon --> internal_exitcode[internal/exitcode]
-    cmd_archon --> internal_git[internal/git]
-    cmd_archon --> internal_llm[internal/llm]
-    cmd_archon --> internal_log[internal/log]
-    cmd_archon --> internal_mcp[internal/mcp]
-    
-    internal_app --> internal_config
-    internal_app --> internal_exitcode
-    internal_app --> internal_fingerprint[internal/fingerprint]
-    internal_app --> internal_git
-    internal_app --> internal_graph[internal/graph]
-    internal_app --> internal_lang[internal/lang]
-    internal_app --> internal_lang_golang[internal/lang/golang]
-    internal_app --> internal_llm
-    internal_app --> internal_log
-    internal_app --> internal_prompt[internal/prompt]
-    
-    internal_mcp --> internal_app
-    internal_mcp --> internal_exitcode
-    internal_mcp --> internal_fingerprint
-    
-    internal_fingerprint --> internal_graph
-    internal_fingerprint --> internal_lang
-    internal_git --> internal_lang
-    internal_git --> internal_log
-    internal_lang --> internal_graph
-    internal_lang_golang --> internal_graph
-    internal_lang_golang --> internal_lang
-    internal_lang_golang --> internal_log
-    internal_llm --> internal_graph
-    internal_llm --> internal_log
-    internal_prompt --> internal_config
+flowchart LR
+    CLI[cmd/archon] --> APP[internal/app]
+    MCP[internal/mcp] --> APP
+    APP --> GIT[internal/git]
+    APP --> LANG[internal/lang]
+    APP --> GRAPH[internal/graph]
+    APP --> LLM[internal/llm]
+    APP --> FINGERPRINT[internal/fingerprint]
+    LANG --> GOLANG[internal/lang/golang]
+    GOLANG --> GRAPH
+    FINGERPRINT --> GRAPH
+    LLM --> GRAPH
 ```
 
 ## Core Modules
 
-### `internal/app`
-The orchestration layer. It manages the Git repository state and coordinates the extraction of graph structures and API signatures. Key features include:
-- `Structure(rev)`: Extracts the full dependency graph and API set for a given revision.
-- `Diff()`, `Sync()`, and `Changelog()`: Commands for comparing architecture states and generating documentation.
-
-### `internal/mcp`
-Provides the Model Context Protocol server interface. This allows external LLM agents to inspect the architecture of the repository directly via Archon's logic.
-- `Server`: Wraps the `App` instance to expose structural data as tools.
-- `Args`: Defines inputs for drift comparison (`From`, `To` revisions).
-
-### `internal/fingerprint`
-Responsible for stability checking. It defines the `Lockfile` format which stores the canonical representation of the repository's structure (`graph` and `APIs`) and its hash.
-
-### `internal/lang`
-Abstracts language-specific parsing. The `Extractor` interface allows adding new languages (currently `golang` is implemented) to perform source code analysis.
+* **`internal/app`**: Acts as the central orchestrator that provides the primary interface for repository analysis. It coordinates the extraction of graph and API data from Git snapshots, manages configuration, and facilitates synchronization, diffing, and structure generation.
+* **`internal/mcp`**: Implements the Model Context Protocol server, allowing LLM clients to interface with the `App` instance. It provides HTTP and Stdio transport support to expose repository analysis capabilities remotely.
+* **`internal/llm`**: Manages communication with external large language models. It handles task-specific completion requests and provides logic to generate descriptive "deltas" based on graph and code structural changes.
 
 ## Key Types
 
-| Type | Description |
-| :--- | :--- |
-| `graph.Graph` | A collection of nodes and edges representing project structure. |
-| `lang.APISet` | A list of packages and their exported signatures. |
-| `config.Values` | Project-specific configuration for LLM integration and generators. |
-| `fingerprint.Lockfile` | Persistence layer for architecture state snapshots. |
+* **`app.App`**: The primary controller containing repository state, configuration, and interfaces for logging and LLM interaction.
+* **`graph.Graph`**: A representation of the dependency structure, containing nodes and edges extracted from source code.
+* **`lang.APISet`**: A collection of exported package APIs, including signatures and documentation, used for tracking functional changes.
+* **`fingerprint.Lockfile`**: A serialized state containing the graph hash, dependency graph, and API set used to detect drift between Git revisions.
+* **`config.Generator`**: Defines instructions for custom documentation generation tasks, including the prompt and target path.
 
-## Changelog Summary (Recent Changes)
+## Changelog Summary
 
-*   **Added**: `internal/mcp` module for LLM-based tool integration.
-*   **Added**: Integration between `cmd/archon` and `internal/mcp`.
-*   **Updated**: `internal/llm.Client` now includes `Timeout` configuration.
-*   **Added**: Enhanced reporting helpers `FormatAPIs` and `FormatGraph` in `internal/app`.
+The following structural changes were detected in `internal/mcp`:
+* Added `func NewHTTPServer(addr string, handler http.Handler) *http.Server`
+* Added `func ServeHTTP(ctx context.Context, srv *http.Server) error`
+* Added `var Version`

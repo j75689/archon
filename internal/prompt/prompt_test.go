@@ -71,7 +71,7 @@ func TestLoadUsesBuiltInArchitecturePrompt(t *testing.T) {
 		"architecture graph",
 		"exported API",
 		"structure diff",
-		"system mermaid",
+		"System Graph",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rendered built-in prompt %q does not contain %q", got, want)

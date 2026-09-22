@@ -1,74 +1,91 @@
-# Archon Documentation
+# Architecture
 
-Archon is a tool for tracking and analyzing the architecture of a Go project. It enables tracking project structures, identifying API changes across git revisions, and providing LLM-powered insights through a Model Context Protocol (MCP) server.
+Archon is a modular tool designed for analyzing, documenting, and detecting drift in codebase structures and APIs. It leverages Git for version control snapshots, language-specific extractors to map graph dependencies and API signatures, and LLM-driven generation to provide insights or changelogs based on those structural differences.
 
-## System Architecture
+## System Graph
 
 ```mermaid
 graph TD
-    cmd_archon[cmd/archon] --> internal_app[internal/app]
-    cmd_archon --> internal_config[internal/config]
-    cmd_archon --> internal_exitcode[internal/exitcode]
-    cmd_archon --> internal_git[internal/git]
-    cmd_archon --> internal_llm[internal/llm]
-    cmd_archon --> internal_log[internal/log]
-    cmd_archon --> internal_mcp[internal/mcp]
-    
+    cmd_archon[github.com/j75689/archon/cmd/archon]
+    internal_app[github.com/j75689/archon/internal/app]
+    internal_config[github.com/j75689/archon/internal/config]
+    internal_doc[github.com/j75689/archon/internal/doc]
+    internal_exitcode[github.com/j75689/archon/internal/exitcode]
+    internal_fingerprint[github.com/j75689/archon/internal/fingerprint]
+    internal_git[github.com/j75689/archon/internal/git]
+    internal_graph[github.com/j75689/archon/internal/graph]
+    internal_lang[github.com/j75689/archon/internal/lang]
+    internal_lang_golang[github.com/j75689/archon/internal/lang/golang]
+    internal_llm[github.com/j75689/archon/internal/llm]
+    internal_log[github.com/j75689/archon/internal/log]
+    internal_mcp[github.com/j75689/archon/internal/mcp]
+    internal_prompt[github.com/j75689/archon/internal/prompt]
+    cmd_archon --> internal_app
+    cmd_archon --> internal_config
+    cmd_archon --> internal_exitcode
+    cmd_archon --> internal_git
+    cmd_archon --> internal_llm
+    cmd_archon --> internal_log
+    cmd_archon --> internal_mcp
     internal_app --> internal_config
     internal_app --> internal_exitcode
     internal_app --> internal_fingerprint
     internal_app --> internal_git
     internal_app --> internal_graph
     internal_app --> internal_lang
-    internal_app --> internal_lang_golang[internal/lang/golang]
+    internal_app --> internal_lang_golang
     internal_app --> internal_llm
     internal_app --> internal_log
     internal_app --> internal_prompt
-    
-    internal_mcp --> internal_app
-    internal_mcp --> internal_exitcode
-    internal_mcp --> internal_fingerprint
-    
     internal_fingerprint --> internal_graph
     internal_fingerprint --> internal_lang
-    
+    internal_git --> internal_lang
+    internal_git --> internal_log
+    internal_lang --> internal_graph
     internal_lang_golang --> internal_graph
     internal_lang_golang --> internal_lang
     internal_lang_golang --> internal_log
-    
     internal_llm --> internal_graph
     internal_llm --> internal_log
-    
-    internal_git --> internal_lang
-    internal_git --> internal_log
+    internal_mcp --> internal_app
+    internal_mcp --> internal_exitcode
+    internal_mcp --> internal_fingerprint
+    internal_prompt --> internal_config
 ```
 
 ## Key Components
 
-### `internal/app`
-The core engine that coordinates repository snapshots, extraction logic, and command execution (Sync, Diff, Structure).
+### internal/app
+This package serves as the central orchestrator, providing methods to compare code revisions, extract structural graphs and APIs, and manage synchronization tasks. It interfaces with Git for repository access and utilizes specialized extractors and LLM clients to process codebase changes.
 
-### `internal/mcp`
-Provides an interface for AI assistants to interact with the Archon engine. It supports remote connectivity and standard IO operation to perform architectural drift analysis.
+### internal/fingerprint
+This package is responsible for generating, comparing, and managing project fingerprints. It facilitates the creation of lockfiles that capture the state of a graph and its associated APIs, allowing for diffing and hash verification.
 
-### `internal/fingerprint`
-Responsible for calculating hashes and identifying API/Graph diffs. It facilitates the `Lockfile` system to detect architectural drift between git commits.
+### internal/lang/golang
+This package implements language-specific logic for Go projects. It provides the `Extractor` implementation to scan snapshots and resolve dependency graphs and exported API signatures.
 
-### `internal/lang`
-Defines the `Extractor` interface, allowing Archon to support multiple languages, with `internal/lang/golang` providing the primary implementation for Go analysis.
+### internal/mcp
+This package provides the Model Context Protocol (MCP) server implementation for Archon. It enables external agents to interact with the application’s core logic through standardized transports, including HTTP handlers and stdio execution.
 
-## API Reference Summary
+## API Reference
 
-| Package | Key Exports |
+| Package | Key Exported Names |
 | :--- | :--- |
-| **`internal/app`** | `New`, `Sync`, `Diff`, `Structure`, `FormatAPIs`, `FormatGraph` |
-| **`internal/config`** | `Load`, `Values`, `Generator` |
-| **`internal/graph`** | `DiffGraphs`, `RenderMermaid`, `Compile` |
-| **`internal/fingerprint`** | `Hash`, `DiffAPIs`, `NewLockfile` |
-| **`internal/llm`** | `Complete`, `Delta`, `Client` |
-| **`internal/mcp`** | `New`, `Server`, `Connect`, `HTTPHandler` |
+| `cmd/archon` | `errExit` |
+| `internal/app` | `App`, `New`, `Sync`, `Structure`, `Diff`, `Changelog` |
+| `internal/config` | `Load`, `Values`, `Generator` |
+| `internal/doc` | `ExtractRegion`, `ReplaceRegion`, `NewDocument`, `AppendAnchor` |
+| `internal/exitcode` | `OK`, `Fail`, `Gate` |
+| `internal/fingerprint` | `Lockfile`, `DiffAPIs`, `Hash`, `NewLockfile` |
+| `internal/git` | `Repo`, `Open`, `Snapshot`, `LogSubjects`, `DescribeTag` |
+| `internal/graph` | `Graph`, `Diff`, `RenderMermaid`, `DiffGraphs` |
+| `internal/lang` | `Extractor`, `Snapshot`, `APISet` |
+| `internal/lang/golang` | `Extractor`, `WantFile` |
+| `internal/llm` | `Client`, `Complete`, `Delta` |
+| `internal/log` | `Logger`, `Writer`, `Nop` |
+| `internal/mcp` | `Server`, `New`, `RunStdio`, `HTTPHandler`, `Version` |
+| `internal/prompt` | `Render`, `Load`, `BuiltIn` |
 
 ## Recent Changes
-- Introduced `internal/mcp` package for external integration.
-- Updated `internal/llm` client signature to include `Timeout`.
-- Enhanced `internal/app` with `Structure`, `FormatAPIs`, and `FormatGraph` functions.
+
+The `internal/mcp` package has been updated with new exported functions `NewHTTPServer` and `ServeHTTP` for HTTP-based server management, along with a new `Version` variable.
